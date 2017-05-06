@@ -1,0 +1,886 @@
+#!/usr/bin/env bash
+
+# A helper script for building Python on Linux from source and installing it
+# to a self-contained location such as /opt/python/3.4.5 that can be
+# easily uninstalled by just deleting the directory.
+#
+# The complete steps are:
+#
+# - make a temporary directory to build in
+# - download the source tarball and associated GPG signature file
+# - verify the signature using GPG, aborting if gpg --verify fails
+#   (see https://www.python.org/downloads/ for importing necessary pub keys)
+# - unpack the tarball
+# - configure the build using secure options and generic optimization (by default)
+# - compile using as many processes as there are processors on this machine;
+# - if RUNTESTS=1, then we run the Python test suite and report the results
+# - if NOINSTALL=1, then we stop here and don't install or remove the build dir
+# - install the built Python using 'altinstall (which doesn't make symlinks
+#   of python3 -> python3.5, for example) if ALTINSTALL=1 or using
+#   the normal 'install' target otherwise (which also creates symlinks
+#   from versions like python2 or python3 to the actual exe such as python2.7
+#   or python3.5).
+# - install Pip if needed, forcing upgrade to latest version if PIPUPGRADE=1
+# - install IPython if needed, unless NOIPYTHON is set to 1, upgrading
+#   to existing version if IPYTHONUPGRADE=1.
+# - save log files of preceeding in a .build subdirectory of the install dir
+# - remove the build directory (containing all temp files) unless NOCLEANUP=1
+#
+# See the usage info for all options that are configurable
+# by environment variables (e.g., install-python --help).
+
+# The container directory for different Python versions that are installed
+# when no target directory is specificed.
+PYBASE="${PYBASE:-/opt/python}"
+
+# The package extension of the Python package to download; 'tgz'
+# seems to exist for all versions, so that's the default.
+EXT="${EXT:-tgz}"
+
+# Package template for Python package (e.g., Python-3.6.1.tgz),
+# used by URL template below and the 'url' helper function.
+PACKAGE="Python-\${version}.${EXT}"
+
+# URL template for URL to download the Python package from;
+# the 'url' function below will interpolate the version that
+# is passed as the first arg to yield the actual URL.
+URL="https://www.python.org/ftp/python/\${version}/${PACKAGE}"
+
+# gcc -mtune value, which determines how instructions are optimized;
+# we use generic by default in order to be more useful for building
+# and running on different machines.
+MTUNE="${MTUNE:-generic}"
+
+# gcc -march value, if provided; if not provided, we don't include
+# -march, and rely on gcc to use its default.
+MARCH="${MARCH:-}"
+
+# If set to 1, then we leave the temporary directory that contains
+# the Python download, build directory, and compilation artifcacts
+# and log files.
+NOCLEAN="${NOCLEAN:-0}"
+
+# If set to 1, then we halt after compilation and don't install
+# or cleanup.
+NOINSTALL="${NOINSTALL:-0}"
+
+# If set to 1, then don't install IPython.
+NOIPYTHON="${NOIPYTHON:-0}"
+
+# If set to 1, then if Pip is installed already, try to upgrade
+# to the latest version.
+PIPUPGRADE="${PIPUPGRADE:-0}"
+
+# If set to 1, then if IPython is already installed, try to
+# upgrade to the latest version.
+IPYTHONUPGRADE="${IPYTHONUPGRADE:-0}"
+
+## The ENABLE* flags expose the most commonly used configure options.  ##
+
+# If set to 1 (default), create ipv6 aware python ('--enable-ipv6'),
+# and if set to 0, ipv6 will not be supported ('--disable-ipv6').
+ENABLEIPV6="${ENABLEIPV6:-1}"
+
+# If set to 1 (default is 0), then '--enable-optimizations' is used for
+# Python versions that support it. The install takes much longer, but
+# the performance improvements are significant.
+ENABLEOPTIMIZATIONS="${ENABLEOPTIMIZATIONS:-0}"
+
+# If set to 1 (default is 0), try to use the system expat
+# ('--with-system-expat' option).
+ENABLESYSTEMEXPAT="${ENABLESYSTEMEXPAT:-0}"
+
+# If set to 1 (default is 0), try to use the system libffi
+# ('--with-system-libffi' option).
+ENABLESYSTEMFFI="${ENABLESYSTEMFFI:-0}"
+
+# If set to 1 (default), then use the option to enable loadable extensions
+# in the sqlite3 module ('--enable-loadable-sqlite-extensions' option).
+ENABLESQLITEEXTENSIONS="${ENABLESQLITEEXTENSIONS:-1}"
+
+# If set to 1 (default is 0), then use make a pydebug build, which is
+# useful for running the Python tests and debugging.
+ENABLEPYDEBUG="${ENABLEPYDEBUG:-0}"
+
+# If set to 1 (default is 0), then the Python test suite will be run
+# after compiling and before installing.
+RUNTEST="${RUNTESTS:-0}"
+
+# If set to 1 (default), then if we run tests and there is a failure,
+# we still continue with remaining tasks. The default is 1, because
+# it's not that uncommon that at least 1 test is failing due to
+# some dependency problem or some other issue that doesn't necessarily
+# indicate something went wrong with the build.
+# If set to '0', then any non-zero exit status when running tests
+# causes us to abort and leave the build directory around for inspection.
+TESTFAILOK="${TESTFAILOK:-1}"
+
+# If set to 1 (default is 0), run 'make altinstall' to install
+# instead of 'make install', which just installs versioned binaries
+# such as 'python3.6' and not the 'python3 -> python3.6' symlinks
+# that 'make install' creates.
+ALTINSTALL="${ALTINSTALL:-0}"
+
+# If set to 1 (default is 0), then if there is already a Python installed
+# at the target install directory, we overwrite it; otherwise, we
+# just notify that it already exists and skip the Python
+# install step (but Pip and IPython proceed as normally).
+CLOBBER="${CLOBBER:-0}"
+
+
+show-usage() {
+    echo "usage: ${1:-install-python} VERSION [INSTALLDIR]"
+    echo
+    echo "Parameters:"
+    echo " - VERSION: full Python version, such as 3.6.1"
+    echo " - INSTALLDIR: optional directory to install to [default is to use"
+    echo "       the full version number as the directory name inside"
+    echo "       \${PYBASE}, which defaults to /opt/python]"
+    echo
+    echo "Environment Variables:"
+    echo " - MTUNE: optimization target passed as -mtune to gcc [default is generic]"
+    echo " - MARCH: machine type to generate instructions for, passed as"
+    echo "       -march to gcc [default is none, to use gcc default]"
+    echo " - EXT: file extension for package to download [default is tgz]"
+    echo " - RUNTESTS: if set to 1 (default is 0), then the Python test suite"
+    echo "       will be run and the results printed; this happens after the"
+    echo "       build stage and before installation; to run the tests, "
+    echo "       you probably want to use all of"
+    echo "       NOCLEAN=1 ENABLEPYDEBUG=1 NOINSTALL=1 RUNTESTS=1"
+    echo "       See also the TESTFAILOK variable for how to react to failure."
+    echo " - NOCLEAN: if set to 1, the temporary directory will not be"
+    echo "       removed [default is to remove it only on success]"
+    echo " - NOINSTALL: if set to 1, then don't install Python, just compile it"
+    echo "       and leave the compiled artifacts in the build directory"
+    echo " - NOIPYTHON: if set to 1, then IPython won't be installed"
+    echo " - PYBASE: a base directory [defaults to /opt/python] for versioned"
+    echo "       subdirectories [such as /opt/python/3.6.1] to use as the"
+    echo "        installation target directory when no INSTALLDIR arg is given"
+    echo " - ENABLESQLITEEXTENSIONS: if set to 1 (default), then use the"
+    echo "       --enable-loadable-sqlite-extensions configure option"
+    echo "       or apply the manual patch that was required before that"
+    echo "       configure option was added"
+    echo " - ENABLEIPV6: if set to 1 (default), then use the --enable-ipv6"
+    echo "       configure option, and if 0, use --disable-ipv6."
+    echo " - ENABLEOPTIMIZATIONS: if set to 1 (defualt is 0), then use"
+    echo "       the --enable-optimizations configure option for newer"
+    echo "       Python versions that support it."
+    echo " - ENABLESYSTEMEXPAT: if set to 1 (default is 0), then use"
+    echo "       the --with-system-expat configure option if supported."
+    echo " - ENABLESYSTEMFFI: if set to 1 (default is 0), then use"
+    echo "       the --with-system-ffi configure option if supported."
+    echo " - ENABLEPYDEBUG: if set to 1 (default is 0), then use"
+    echo "       the --with-pydebug configure option, which is useful"
+    echo "       for testing and debugging"
+    echo " - TESTFAILOK: if set to 0 (default is 1), then abort without "
+    echo "       installing anything if the test suite returns a non-zero"
+    echo "       exit status indicating at least 1 test failed."
+    echo " - CLOBBER: if set to 1 (default is 0), then any existing Python"
+    echo "       at the install location will be ovewritten; otherwise we"
+    echo "       skip the install step and note that it was skipped"
+    echo "       (but the Pip and IPython steps still happen)"
+}
+
+# Join args by delimiter given as 1st param.
+join-by() {
+    set -u
+    local IFS="$1"
+    shift
+    echo "$*"
+    local join_by_status=$?
+    set +u
+    return "${join_by_status}"
+}
+
+# cd into the directory given as the first param, failing with a helpful
+# error message if unable to cd successfully or if multiple args are passed.
+change-dir() {
+    local -r dirpath=${1:-}
+    if [[ ! -d "${dirpath}" ]]
+    then
+        echo "can't change-dir into non-directory: ${dirpath}"
+        return 1
+    fi
+    shift
+    [[ -z "$*" ]] || {
+        echo "change-dir only accepts one arg"
+        return 1
+    }
+    cd "${dirpath}" || {
+        local -r change_dir_status=$?
+        echo "couldn't cd into directory: ${dirpath}"
+        return "${change_dir_status}"
+    }
+}
+
+# Get core-count, using '1' if not able to detect OS type
+core-count() {
+    if [[ -z "${OSTYPE:-}" ]]
+    then
+        # OSTYPE is a predefined Bash variable, so should be available,
+        # but use core count of 1 if not defined rather than failing
+        echo -n 1
+        return 0
+    fi
+    case $OSTYPE in
+        darwin*) command sysctl -n machdep.cpu.core_count | tr -d -C '[:digit:]' ;;
+        *) command grep -c -E '^processor\s*:' < /proc/cpuinfo ;;
+    esac
+}
+
+# Interpolate 1st param as version into PACKAGE template defined above.
+package() {
+    local -r version=${1:-}
+    if [[ -z "${version}" ]]
+    then
+        echo "a version is required"
+        return 1
+    fi
+    eval "echo \"${PACKAGE}\""
+}
+
+# Echo first two parts of version given as 1st param (e.g., 3.6 for 3.6.1p0).
+major-version() {
+    local version=${1:-}
+    [[ -n "${version}" ]] || {
+        echo "invalid version: ${version}"
+        return 1
+    }
+    local result
+    result=$(grep -E -o '^[0-9]+\.[0-9]+' 2>/dev/null <<< "${version}") || {
+        echo "couldn't extract X.Y version from: ${version}"
+        return 1
+    }
+    echo -n "${result}"
+}
+
+# Echo path to the unpacked Python source directory given the build
+# directory and the version as the first and second params, respectively.
+src-dir() {
+    set -u
+    local -r builddir=$1
+    local -r version=$2
+    local src_dir_status
+    echo "${builddir}/$(basename "$(package "${version}")" ".${EXT}")"
+    src_dir_status=$?
+    set +u
+    return "${src_dir_status}"
+}
+
+# Echo the URL of the Python source package given version as first param.
+url() {
+    set -u
+    local -r version=$1
+    local url_status
+    eval "echo \"${URL}\""
+    url_status=$?
+    set -u
+    return "${url_status}"
+}
+
+# Run a build command with minimal environment, limited to
+# LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
+# and echoing the exact command to be executed before executing it.
+run-clean() {
+    set -u
+    local -r language="${LANGUAGE:-en_US}"
+    local -r lang="${LANG:-${language}.UTF-8}"
+
+    echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
+    env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
+    local -r run_status=$?
+    set +u
+    return "${run_status}"
+}
+
+# Check success of stage just completed, and on failure, show log
+# info and return with the original status.
+# The first param should be a stage (configure, compile, install, or
+# install-pip), the second param should be the build dire,
+# and the third param should be the status code of the stage.
+stage-complete() {
+    set -u
+    local -r stage=$1
+    local -r builddir=$2
+    local -r complete_status=$3
+
+    if [[ "${complete_status}" != "0" ]]
+    then
+        echo " - failed with code ${complete_status}:"
+        tail "${builddir}/${stage}.log"
+        echo
+        echo "See ${builddir}/${stage}.log for more info"
+    fi
+    set +u
+    return "${complete_status}"
+}
+
+# Download Python source package using cUrl.
+# The first param should be the directory to download into, which
+# must already exist, and the second param should be the version
+# (e.g., 3.6.1).
+download() {
+    local -r builddir=${1:-}
+	local -r version=${2:-}
+
+    if [[ ! -d "${builddir}" ]]
+    then
+        echo "builddir ${builddir} is not a directory"
+        return 1
+    fi
+    if [[ -z "${version}" ]]
+    then
+        echo "version is required"
+        return 1
+    fi
+
+    local packageurl
+    packageurl=$(url "${version}") || return $?
+    local packagename
+    packagename=$(package "${version}") || return $?
+
+    echo -n " - downloading"
+    change-dir "${builddir}" || return $?
+    local download_status
+    command curl --fail --fail-early -L -s -O "${packageurl}{,.asc}" || {
+        download_status=$?
+        echo " - curl failed to download package or GPG signature file(s) [status ${download_status}]:"
+        echo "   - ${packageurl}"
+        echo "   - ${packageurl}.asc"
+        return "${download_status}"
+    }
+    command gpg --verify "${packagename}.asc" "${packagename}" >/dev/null 2>&1 || {
+        download_status=$?
+        echo " - GPG verification of download failed with status ${download_status}"
+        return "${download_status}"
+    }
+}
+
+# Unpack the downloaded source package in the same directory that contains
+# the tarball and which should be given as the first param
+# the package as the first param, and the version as second param.
+# The tar packaged
+unpack() {
+    local -r tarpath=${1:-}
+    if [[ ! -f "${tarpath}" ]]
+    then
+        echo "invalid path to package: ${tarpath}"
+    fi
+
+    local parentdir
+    parentdir=$(dirname "${tarpath}") || return $?
+
+    echo -n " - unpacking"
+    change-dir "${parentdir}" || return $?
+
+    local unpack_status
+    tar xf "${tarpath}" || {
+        unpack_status=$?
+        echo " - failed with status ${unpack_status} unpackage package: ${tarpath}"
+        return "${unpack_status}"
+    }
+}
+
+# Return whether Python configure script in current working directory
+# supports the option passed as the first parameter.
+has-configure-opt() {
+    local -r opt=${1:-}
+    [[ -n "${opt}" ]] || {
+        echo "configure option is required"
+        return 1
+    }
+    ./configure --help=short | command grep -- "${opt}" >/dev/null 2>&1
+    return $?
+}
+
+# Run the configure step given params for the build directory in which the
+# source has already been unpacked, the Python version, and the target
+# installation directory, respectively.
+configure() {
+    set -u
+    local -r builddir=$1
+    local -r version=$2
+    local -r destdir=$3
+
+    local -r packagedir=$(src-dir "${builddir}" "${version}")
+    set +u
+
+    echo -n " - configuring"
+    change-dir "${packagedir}" || return $?
+
+    local -a copts
+
+
+    set -u
+
+    # Some python3 versions have with-wide-unicode, which is the equivalent
+    # of --enable-unicode=ucs4 under python2
+    if has-configure-opt --with-wide-unicode
+    then
+        copts+=(--with-wide-unicode)
+    else
+        if has-configure-opt --enable-unicode
+        then
+            copts+=(--enable-unicode=ucs4)
+        fi
+    fi
+
+    # Python 3.2 and higher have this option, but the sqlite3 on macs
+    # does not support it, so don't enable on mac for any version
+    if [[ $OSTYPE != darwin* ]] && [[ "${ENABLESQLITEEXTENSIONS}" = "1" ]]
+    then
+        if has-configure-opt --enable-loadable-sqlite-extensions
+        then
+            copts+=(--enable-loadable-sqlite-extensions)
+        fi
+    fi
+
+    # Same dbm order as debian (but with ndbm added as well as the last option):
+    if has-configure-opt --with-dbmliborder
+    then
+        copts+=(--with-dbmliborder=bdb:gdbm:ndbm)
+    fi
+
+    # We install Pip manually below so that we can use get-pip.py and
+    # thus install identically across all Python versions, rather than
+    # relying on '--ensure-pip' for those versions that support it
+    # and get-pip.py for those that don't.
+    if has-configure-opt --with-ensurepip
+    then
+        copts+=(--without-ensurepip)
+    fi
+
+    if has-configure-opt --enable-ipv6
+    then
+        case "${ENABLEIPV6}" in
+            1) copts+=(--enable-ipv6);;
+            0) copts+=(--disable-ipv6);;
+            *) echo -n " - ignoring invalid ENABLEIPV6=${ENABLEIPV6} setting";;
+        esac
+    fi
+
+    if has-configure-opt '--with-hash-algorithm=.*\bsiphash24\b'
+    then
+        copts+=(--with-hash-algorithm=siphash24)
+    fi
+
+    if [[ "${ENABLESYSTEMEXPAT}" = "1" ]] && has-configure-opt --with-system-expat
+    then
+        copts+=(--with-system-expat)
+    fi
+
+    if [[ "${ENABLESYSTEMFFI}" = "1" ]] && has-configure-opt --with-system-ffi
+    then
+        copts+=(--with-system-ffi)
+    fi
+
+    if [[ "${ENABLEOPTIMIZATIONS}" = "1" ]] && has-configure-opt --enable-optimizations
+    then
+        copts+=(--enable-optimizations)
+    fi
+
+    if [[ "${ENABLEPYDEBUG}" = "1" ]]
+        then
+        copts+=(--with-pydebug)
+    fi
+
+    set +u
+
+    # --enable-shared is omitted because this isn't intended to be a system
+    # python that is available for embedding by other apps, and there seems
+    # to be a small performance advantage to not enabling it and fewer
+    # complications with finding existing libpython unintentionally.
+
+    # shellcheck disable=SC2046,SC2068
+    run-clean ./configure \
+        --prefix="${destdir}" \
+        ${copts[@]} \
+        LDFLAGS=-Wl,-z,relro,-z,now,-rpath="${destdir}/lib" \
+        > "${builddir}"/configure.log 2>&1
+    stage-complete configure "${builddir}" $?
+}
+
+# Run the compile step given params for the build directory in which the
+# source has already been unpacked and configured, the Python version, and
+# the target installation directory, respectively.
+compile() {
+    set -u
+    local -r builddir=$1
+    local -r version=$2
+    local -r destdir=$3
+    set +u
+    local mversion
+    local makeflags
+    mversion=$(major-version "${version}") || return $?
+
+    # verify no spaces in the vars we use that could affect splitting
+    [[ ${destdir} = *" "* ]] && {
+        echo "invalid dest dir: ${destdir}"
+        return 1
+    }
+    [[ ${MARCH} = *" "* ]] && {
+        echo "invalid dest dir: ${MARCH}"
+        return 1
+    }
+    [[ ${MTUNE} = *" "* ]] && {
+        echo "invalid dest dir: ${MTUNE}"
+        return 1
+    }
+
+    # Only set MAKEFLAGS if not already in environment, since we want to
+    # honor MAKEFLAGS="" if provided by not using any flags.
+    if ! command env | grep -E '^MAKEFLAGS=' >/dev/null 2>&1
+    then
+        # Compile in parallel using as many processes as proc count.
+        # makeflags="-j$(core-count)"
+        makeflags=-j
+    fi
+
+    local cflags=(
+        "-fPIC"                      # position-independent code
+        "-fstack-protector-strong"   # buffer overflow protection (GCC 4.9+)
+        "--param=ssp-buffer-size=4"  # for funcs with buffers >= 4-bytes
+        "-Wp,-D_FORTIFY_SOURCE=2"    # more buffer overflow protection
+        "-fexceptions"               # enable exception handling
+        "-Wstrict-prototypes"        # warn if arg types not specified
+        "-Wformat"                   # printf/scanf... warnings
+        "-Wformat-security"          # and security concerns for same
+        "-mtune=${MTUNE}"            # optimization target
+        "-DNDEBUG"                   # disable build-time C asserts (required)
+        "-I${destdir}/include/python${mversion}:/usr/local/include:/usr/include"
+    )
+    if [[ -n "${MARCH}" ]]
+    then
+        cflags+=("-march=${MARCH}")
+    fi
+
+    echo -n " - compiling"
+    change-dir "$(src-dir "${builddir}" "${version}")" || return $?
+    run-clean make CFLAGS="$(join-by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${builddir}"/compile.log 2>&1
+    stage-complete compile "${builddir}" $?
+}
+
+# Run the Python test suite for the Python version given as 2nd param
+# using the already compiled Python source that used the base directory
+# given as the 1st param.
+run-tests() {
+    set -u
+    local -r builddir=$1
+    local -r version=$2
+    set +u
+    change-dir "$(src-dir "${builddir}" "${version}")" || return $?
+    local libdir
+    libdir="$(command ls -d -1 build/lib*)" || return $?
+    local -r testclass=$(if [[ "${version:0:1}" = "2" ]]; then echo -n test.regrtest; else echo -n test; fi)
+    local teststatus
+    run-clean LD_LIBRARY_PATH="${libdir}" ./python -m "${testclass}" > "${builddir}"/test.log 2>&1
+    teststatus=$?
+    if [[ "${teststatus}" != "0" ]]; then
+        echo " - failed with code ${teststatus}:"
+        sed -n -E '/[:digit:]* tests OK\./,$p' < "${builddir}"/test.log
+        echo "See ${builddir}/test.log for more info"
+    fi
+    return "${teststatus}"
+}
+
+# Install the already compiled Python that was unpacked, configured,
+# and compiled in the build directory given as the first param, for
+# the specific Python version given as the second param.
+install() {
+    set -u
+    local -r builddir=$1
+    local -r version=$2
+    local -r installtarget=$(if [[ "${ALTINSTALL}" = "1" ]]; then echo -n altinstall; else echo -n install; fi;)
+    set +u
+    echo -n " - installing"
+    change-dir "$(src-dir "${builddir}" "${version}")" || return $?
+    run-clean make "${installtarget}" > "${builddir}"/install.log 2>&1
+    stage-complete install "${builddir}" $?
+}
+
+# Install Pip if it is not yet installed into the Python directory given
+# as the second param by downloading get-pip.py in the build directory
+# given as the first param and using the target Python to run get-pip.py.
+# The third param should be the version.
+install-pip() {
+    set -u
+    local -r builddir=$1
+    local -r installdir=$2
+    local -r version=$3
+    set +u
+
+    if [[ -z "${version}" ]]
+    then
+        echo "install-pip requires params: builddir installdir version"
+        return 1
+    fi
+    local mversion
+    mversion=$(major-version "${version}") || return $?
+
+    local -r bindir="${installdir}/bin"
+    local -r pip_bin="${bindir}/pip${mversion}"
+
+    echo -n " - installing Pip"
+    local pip_status
+    if [[ ! -f "${pip_bin}" ]]
+    then
+        change-dir "${builddir}" || return $?
+        curl --fail --fail-early -s -LO 'https://bootstrap.pypa.io/get-pip.py' || {
+            local curl_status=$?
+            echo -n " - failed to download get-pip.py [status ${curl_status}]"
+            return "${curl_status}"
+        }
+        "${bindir}/python${mversion}" get-pip.py > "${builddir}"/install-pip.log 2>&1
+        pip_status=$?
+    else
+        if [[ "${PIPUPGRADE}" = "1" ]]
+        then
+            echo -n " - upgrading existing"
+            run-clean "${bindir}/pip${mversion}" install -q -U pip > "${builddir}"/install-pip.log 2>&1
+            pip_status=$?
+        else
+            echo -n " - already installed"
+            pip_status=0
+        fi
+    fi
+    stage-complete install-pip "${builddir}" "${pip_status}"
+}
+
+install-ipython() {
+    set -u
+    local -r builddir=$1
+    local -r installdir=$2
+    local -r version=$3
+    set +u
+
+    if [[ ! -d "${installdir}" ]]
+    then
+        echo "installdir does not exist: ${installdir}"
+        return 1
+    fi
+
+    local mversion;
+    mversion=$(major-version "${version}") || {
+        echo "invalid version: ${version}"
+        return 1
+    }
+
+    echo -n " - installing IPython"
+    local ipython_status=0
+    if [[ "${NOIPYTHON}" = "1" ]]
+    then
+        echo -n " - skipping due to NOIPYTHON=1"
+    else
+        local -r pip_bin="${installdir}/bin/pip${mversion}"
+        local -r ipython_log="${builddir}"/install-ipython.log
+        if [[ ! -f "${installdir}/bin/ipython" ]]
+        then
+            run-clean "${pip_bin}" -q install ipython > "${ipython_log}" 2>&1
+            ipython_status=$?
+        else
+            if [[ "${IPYTHONUPGRADE}" = "1" ]]
+            then
+                echo -n ' - upgrading existing'
+                run-clean "${pip_bin}" -q install -U ipython > "${ipython_log}" 2>&1
+                ipython_status=$?
+            else
+                echo -n " - already installed"
+            fi
+        fi
+    fi
+    stage-complete install-pip "${builddir}" "${ipython_status}"
+}
+
+# Install from source a Python version given as the first param to the
+# target directory given as the second parameter.
+install-python-all() {
+    local -r version=${1:-}
+    local installdir=${2:-}
+
+    # this variable is used by the exit trap and determines whether we
+    # 'rm -rf' the build directory. If NOCLEAN is 1, then we never cleanup,
+    # but if it's any other value, then we'll try to do the "right thing"
+    # by deleting if everything goes according to plan and we actually
+    # install something into the target directory.
+    local cleanup
+    cleanup=$(if [[ "${NOCLEAN:0}" = "1" ]]; then echo -n 0; else echo -n 1; fi)
+
+    if [[ -z "${version}" ]]
+    then
+        echo "version is required"
+        return 1
+    fi
+
+    # check for -h or --help args
+    for arg in "$@"; do
+        case "${arg}" in
+            -h|--help)
+                show-usage "$(basename "$0")"
+                return 0
+        esac
+    done
+
+    set -u
+    if [[ -z "${installdir}" ]]
+    then
+        installdir="${PYBASE}/${version}"
+        echo " - install dir: ${installdir}"
+    fi
+    set +u
+
+    local mversion
+    local arg
+
+    mversion=$(major-version "${version}") || return $?
+
+    local -r parentdir=$(dirname "${installdir}")
+
+    if [[ ! -d "${installdir}" && ! -w "${parentdir}" ]]
+    then
+        echo "directory ${destdir} does not exist or ${parentdir} is not writable"
+        return 1
+    fi
+
+    # use mktemp to create a build directory with a friendly name, under
+    # the user's TMPDIR location; we set a strict umask for creating
+    # the directory, but only change umask this once to keep
+    # the temp directory private (but not the contents after they're
+    # moved elsewhere outside that directory).
+    local builddir
+    builddir=$(umask 077 && mktemp -d -t install-python-"$(tr . - <<< "${version}")"-XXXXXX) || {
+        local mktemp_status
+        mktemp_status=$?
+        echo "error ${mktemp_status} creating builddir using mktemp -d"
+        echo "Check \$TMPDIR and verify that it is set to a suitable directory"
+        return "${mktemp_status}"
+    }
+
+    # Set up exit trap. We can't use a function without making more variables
+    # be globals, so we rely instead on single quoting to not evaluate the
+    # trap commands until the trap fires for some non-zero status code.
+    # The handler deletes the builddir we just created if and only if
+    # "${cleanup}" is set to '1', and then it exits with the original
+    # failed status.
+    # shell-check disable=SC2064,SC2154
+    trap 'local -r rc=$?; if [[ "${cleanup}" = "1" ]]; then command rm -rf "${builddir}"; fi; exit $rc' ERR
+
+    local -r targetpython="${installdir}/bin/python${mversion}"
+    # We build and do the other pre-install steps only in just the i
+    # following cases:
+    #  1. the target python binary doesn't exist
+    #  2. NOINSTALL=1, in which case we don't care whether the target python
+    #     binary exists, as we're probably going to run the test suite
+    #     or experiment with configuration/compilation options.
+    #  3. CLOBBER=1, in which case we'll overwrite any existing installation
+    #     at the target location
+    if [[ "${CLOBBER}" = "1" || "${NOINSTALL}" = "1" || ! -f "${targetpython}" ]]
+    then
+        echo " - build dir: ${builddir}"
+        # most of the commands below follow the same general pattern of
+        # running the command and on failure, ensuring the build directory
+        # and any built artifacts are kept around (cleanup=0) for
+        # manual inspection and possible additional attempts to
+        # configure/compile/install/etc. with different options,
+        # and then the original non-zero status is returned to exit
+        # this function after 'cleanup=0' has been set.
+        download "${builddir}" "${version}" || {
+            local download_status
+            download_status=$?
+            cleanup=0
+            return "${download_status}"
+        }
+        echo
+        unpack "${builddir}"/"$(package "${version}")" || {
+            local unpack_status
+            unpack_status=$?
+            cleanup=0
+            return "${unpack_status}"
+        }
+        echo
+        configure "${builddir}" "${version}" "${installdir}" || {
+            local configure_status
+            configure_status=$?
+            cleanup=0
+            return "${configure_status}"
+        }
+        echo
+        compile "${builddir}" "${version}" "${installdir}" || {
+            local compile_status
+            compile_status=$?
+            cleanup=0
+            return "${compile_status}"
+        }
+        echo
+        if [[ "${RUNTESTS}" = "1" ]]
+        then
+            run-tests "${builddir}" "${version}" || {
+                local test_status
+                test_status=$?
+                case "${TESTFAILOK}" in
+                    0) cleanup=0; return "${test_status}";;
+                    1) ;;
+                    *) echo "ignoring TESTFAILOK with invalid value: ${TESTFAILOK}";;
+                esac
+            }
+        fi
+        if [[ "${NOINSTALL}" = "1" ]]
+        then
+            # don't clean up if not installing unless they explicitly asked
+            # for it by setting NOCLEAN to 1 (default is 0)
+            if [[ "${NOCLEAN}" != "1" ]]
+            then
+                cleanup=0
+            fi
+            return 0
+        fi
+        install "${builddir}" "${version}" || {
+            local install_status
+            install_status=$?
+            echo
+            cleanup="0"  # don't clean up if install failed
+            return "${install_status}"
+        }
+        echo
+    else
+        echo " - Python already exists: ${targetpython}"
+    fi
+
+    install-pip "${builddir}" "${installdir}" "${version}" || {
+        local pip_status
+        pip_status=$?
+        echo
+        cleanup="0"  # don't clean up, so user can debug the failure
+        return "${pip_status}"
+    }
+    echo
+
+    install-ipython "${builddir}" "${installdir}" "${version}" || {
+        local ipython_status
+        ipython_status=$?
+        echo
+        cleanup="0"  # don't clean up
+        return "${ipython_status}"
+    }
+    echo
+
+    # preserve all the logs under a .build directory inside the install dir
+    if test -n "$(find "${builddir}" -maxdepth 1 -name '*.log' -print -quit)"
+    then
+        echo -n " - saving logs to ${installdir}/.build"
+        mkdir -p "${installdir}/.build" || {
+            echo " - couldn't create .build directory"
+            return 1
+        }
+        # copy with preserve if it doesn't exist at target or the
+        # the source file is newer than the file in the .build dir
+        cp -p -u "${builddir}"/*.log "${installdir}/.build/"
+        echo
+    fi
+}
+
+# run only if not sourced, so this script can be sourced for
+# interactive use of the functions
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+   install-python-all "$@"
+fi
