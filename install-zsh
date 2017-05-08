@@ -54,64 +54,54 @@ prepare() {
         return
 
     install_dir="${ZSH_BASE}/${version}"
-    mkdir -p "${install_dir}" || {
-        rc=$?
-        err "ERROR (${rc}): failed to create install dir: ${install_dir}"
-        return $rc
-    }
+    mkdir -p "${install_dir}" ||
+        err "ERROR (${rc}): failed to create install dir: ${install_dir}" ||
+        return
 
-    [ ! -w "${install_dir}}" ] || {
-        rc=$?
-        err "ERROR (${rc}): install dir exists but is not writable: ${install_dir}"
-        return "${rc}"
-    }
-
-    cd "${build_dir}" >/dev/null || return $?
+    cd "${build_dir}" >/dev/null || return
     for file in "${source_package}" "${source_package}.asc" "${doc_package}" "${doc_package}.asc"
     do
         url="${url_base}/${version}/${file}"
         echo " - downloading: ${url}"
-        curl -s --fail -L -g -o "${file}" "${url}" || {
-            rc=$?
-            err "ERROR (${rc}): couldn't download file from URL '${url}'"
-            return "${rc}"
-        }
+        curl -s --fail -L -g -o "${file}" "${url}" ||
+            err "ERROR ($?): couldn't download file from URL '${url}'" ||
+            return
     done
 
     echo " - verifying ${source_package}.asc ${source_package}"
-    gpg --verify "${source_package}.asc" "${source_package}" > /dev/null 2>&1 || {
-        rc=$?
-        echo
-        err "ERROR (${rc}): couldn't verify source package '${source_package}' signature '${source_package}.asc'"
-        return "${rc}"
-    }
+    gpg --verify "${source_package}.asc" "${source_package}" > /dev/null 2>&1 ||
+        err "ERROR ($?): couldn't verify source package '${source_package}' signature '${source_package}.asc'" ||
+        return
 
     echo " - verifying ${doc_package}.asc ${doc_package}"
-    gpg --verify "${doc_package}.asc" "${doc_package}" > /dev/null 2>&1 || {
-        rc=$?
-        err "ERROR (${rc}): couldn't verify doc package '${doc_package}' signature '${doc_package}.asc'"
-        return "${rc}"
-    }
+    gpg --verify "${doc_package}.asc" "${doc_package}" > /dev/null 2>&1 ||
+        err "ERROR ($?): couldn't verify doc package '${doc_package}' signature '${doc_package}.asc'" ||
+        return
+
     echo " - unpacking ${source_package}"
-    tar xf "${source_package}" || return $?
+    tar xf "${source_package}" ||
+        err "ERROR ($?): couldn't untar source package" ||
+        return
 
     echo " - unpacking ${doc_package}"
-    tar xf "${doc_package}"
+    tar xf "${doc_package}" ||
+        err "ERROR ($?): couldn't untar doc package" ||
+        return
 }
 
 make_build_dir() {
     version=$1
-    [ -n "${version}" ] || {
-        err "usage: make_build_dir VERSION"
+    [ -n "${version}" ] ||
+        err "usage: make_build_dir VERSION" ||
         return
-    }
 
-    build_dir=$(umask 077 && mktemp -d -t install_zsh_"$(echon "${version}" | tr . _)"_XXXXXX) || {
-        rc=$?
-        err "Error ${rc} creating build dir using mktemp -d"
+    build_dir=$(umask 077 && mktemp -d -t install_zsh_"$(echon "${version}" | tr . _)"_XXXXXX)
+    if [ "$?" != "0" ] || [ -d "${build_dir}" ]
+    then
+        err "Error creating build dir using mktemp -d"
         err "Check \$TMPDIR and verify that it is set to a suitable directory"
-        return $rc
-    }
+        return 1
+    fi
     echon "${build_dir}"
 }
 
@@ -152,7 +142,7 @@ install_zsh_main() {
     cd "${package_dir}" || return
 
     echon " - configuring"
-     ./configure --prefix="${install_dir}" > "${build_dir}/configure.log" 2>&1 ||
+    ./configure --prefix="${install_dir}" > "${build_dir}/configure.log" 2>&1 ||
         err "ERROR ($?): configure failed" ||
         return
     echo
@@ -174,7 +164,7 @@ install_zsh_main() {
         return
 
     echo " - storing logs in ${install_dir}/.build"
-    if test -n "$(find "${build_dir}" -maxdepth 1 -name '*.log' -print -quit)"
+    if [ -n "$(find "${build_dir}" -maxdepth 1 -name '*.log' -print -quit)" ]
     then
         cp -p -u "${build_dir}"/*.log "${install_dir}"/.build/ || return
     fi
