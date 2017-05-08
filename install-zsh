@@ -116,7 +116,7 @@ make_build_dir() {
 }
 
 
-run_all() {
+install_zsh_main() {
     precheck || return
     version=$1
 
@@ -183,4 +183,4 @@ run_all() {
  }
 
 
-run_all "$@"
+install_zsh_main "$@"
