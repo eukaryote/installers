@@ -128,7 +128,7 @@ ALTINSTALL="${ALTINSTALL:-0}"
 CLOBBER="${CLOBBER:-0}"
 
 
-show-usage() {
+usage() {
     echo "usage: ${1:-install-python} VERSION [INSTALLDIR]"
     echo
     echo "Parameters:"
@@ -190,7 +190,7 @@ err() {
 }
 
 # Join args by delimiter given as 1st param.
-join-by() {
+join_by() {
     local IFS="${1:?a delimiter parameter is required}"
     shift
     echo "$*"
@@ -198,20 +198,20 @@ join-by() {
 
 # cd into the directory given as the first param, failing with a helpful
 # error message if unable to cd successfully or if multiple args are passed.
-change-dir() {
+change_dir() {
     local -r dirpath=${1:?directory path parameter is required}
     [[ -d "${dirpath}" ]] ||
-        err "can't change-dir to non-directory: ${dirpath}" ||
+        err "can't change_dir to non-directory: ${dirpath}" ||
         return
     shift
     [[ -z "$*" ]] ||
-        err "change-dir only accepts one arg" ||
+        err "change_dir only accepts one arg" ||
         return
     cd "${dirpath}" || return
 }
 
-# Get core-count, using '1' if not able to detect OS type
-core-count() {
+# Get core_count, using '1' if not able to detect OS type
+core_count() {
     if [[ -z "${OSTYPE:-}" ]]
     then
         # OSTYPE is a predefined Bash variable, so should be available,
@@ -234,7 +234,7 @@ package() {
 }
 
 # Echo first two parts of version given as 1st param (e.g., 3.6 for 3.6.1p0).
-major-version() {
+major_version() {
     local version=${1:?version parameter is required}
     [[ -n "${version}" ]] ||
         err "invalid version: ${version}" ||
@@ -248,7 +248,7 @@ major-version() {
 
 # Echo path to the unpacked Python source directory given the build
 # directory and the version as the first and second params, respectively.
-src-dir() {
+src_dir() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r version=${2:?version parameter is required}
     local -r _dir="${build_dir}/$(basename "$(package "${version}")" ".${EXT}")" ||
@@ -265,7 +265,7 @@ url() {
 # Run a build command with minimal environment, limited to
 # LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
 # and echoing the exact command to be executed before executing it.
-run-clean() {
+run_clean() {
     local -r language="${LANGUAGE:-en_US}"
     local -r lang="${LANG:-${language}.UTF-8}"
 
@@ -276,9 +276,9 @@ run-clean() {
 # Check success of stage just completed, and on failure, show log
 # info and return with the original status.
 # The first param should be a stage (configure, compile, install, or
-# install-pip), the second param should be the build dire,
+# install_pip), the second param should be the build dire,
 # and the third param should be the status code of the stage.
-stage-complete() {
+stage_complete() {
     local -r stage=${1:?stage parameter is required}
     local -r build_dir=${2:?build_dir parameter is required}
     local -r complete_status=${3:?complete_status parameter is required}
@@ -309,7 +309,7 @@ download() {
     local -r packagename=$(package "${version}") || return
 
     echo -n " - downloading"
-    change-dir "${build_dir}" || return
+    change_dir "${build_dir}" || return
     command curl --fail --fail-early -L -s -O "${packageurl}{,.asc}" || {
         local -r rc=$?
         true
@@ -336,7 +336,7 @@ unpack() {
     local -r parentdir=$(dirname "${tarpath}") || return
 
     echo -n " - unpacking"
-    change-dir "${parentdir}" || return
+    change_dir "${parentdir}" || return
 
     local unpack_status
     tar xf "${tarpath}" ||
@@ -346,7 +346,7 @@ unpack() {
 
 # Return whether Python configure script in current working directory
 # supports the option passed as the first parameter.
-has-configure-opt() {
+has_configure_opt() {
     local -r opt=${1:?opt parameter is required}
     ./configure --help=short | command grep -- "${opt}" >/dev/null 2>&1
 }
@@ -359,20 +359,20 @@ configure() {
     local -r version=${2:?version parameter is required}
     local -r destdir=${3:?destdir parameter is required}
 
-    local -r packagedir=$(src-dir "${build_dir}" "${version}") || return
+    local -r packagedir=$(src_dir "${build_dir}" "${version}") || return
 
     echo -n " - configuring"
-    change-dir "${packagedir}" || return
+    change_dir "${packagedir}" || return
 
     local -a copts
 
     # Some python3 versions have with-wide-unicode, which is the equivalent
     # of --enable-unicode=ucs4 under python2
-    if has-configure-opt --with-wide-unicode
+    if has_configure_opt --with-wide-unicode
     then
         copts+=(--with-wide-unicode)
     else
-        if has-configure-opt --enable-unicode
+        if has_configure_opt --enable-unicode
         then
             copts+=(--enable-unicode=ucs4)
         fi
@@ -382,14 +382,14 @@ configure() {
     # does not support it, so don't enable on mac for any version
     if [[ $OSTYPE != darwin* ]] && [[ "${ENABLESQLITEEXTENSIONS}" = "1" ]]
     then
-        if has-configure-opt --enable-loadable-sqlite-extensions
+        if has_configure_opt --enable-loadable-sqlite-extensions
         then
             copts+=(--enable-loadable-sqlite-extensions)
         fi
     fi
 
     # Same dbm order as debian (but with ndbm added as well as the last option):
-    if has-configure-opt --with-dbmliborder
+    if has_configure_opt --with-dbmliborder
     then
         copts+=(--with-dbmliborder=bdb:gdbm:ndbm)
     fi
@@ -398,12 +398,12 @@ configure() {
     # thus install identically across all Python versions, rather than
     # relying on '--ensure-pip' for those versions that support it
     # and get-pip.py for those that don't.
-    if has-configure-opt --with-ensurepip
+    if has_configure_opt --with-ensurepip
     then
         copts+=(--without-ensurepip)
     fi
 
-    if has-configure-opt --enable-ipv6
+    if has_configure_opt --enable-ipv6
     then
         case "${ENABLEIPV6}" in
             1) copts+=(--enable-ipv6);;
@@ -412,22 +412,22 @@ configure() {
         esac
     fi
 
-    if has-configure-opt '--with-hash-algorithm=.*\bsiphash24\b'
+    if has_configure_opt '--with-hash-algorithm=.*\bsiphash24\b'
     then
         copts+=(--with-hash-algorithm=siphash24)
     fi
 
-    if [[ ${ENABLESYSTEMEXPAT} = 1 ]] && has-configure-opt --with-system-expat
+    if [[ ${ENABLESYSTEMEXPAT} = 1 ]] && has_configure_opt --with-system-expat
     then
         copts+=(--with-system-expat)
     fi
 
-    if [[ ${ENABLESYSTEMFFI} = 1 ]] && has-configure-opt --with-system-ffi
+    if [[ ${ENABLESYSTEMFFI} = 1 ]] && has_configure_opt --with-system-ffi
     then
         copts+=(--with-system-ffi)
     fi
 
-    if [[ ${ENABLEOPTIMIZATIONS} = 1 ]] && has-configure-opt --enable-optimizations
+    if [[ ${ENABLEOPTIMIZATIONS} = 1 ]] && has_configure_opt --enable-optimizations
     then
         copts+=(--enable-optimizations)
     fi
@@ -445,12 +445,12 @@ configure() {
     # complications with finding existing libpython unintentionally.
 
     # shellcheck disable=SC2046,SC2068
-    run-clean ./configure \
+    run_clean ./configure \
         --prefix="${destdir}" \
         ${copts[@]} \
         LDFLAGS=-Wl,-z,relro,-z,now,-rpath="${destdir}/lib" \
         > "${build_dir}"/configure.log 2>&1
-    stage-complete configure "${build_dir}" $?
+    stage_complete configure "${build_dir}" $?
 }
 
 # Run the compile step given params for the build directory in which the
@@ -460,7 +460,7 @@ compile() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r version=${2:?version parameter is required}
     local -r destdir=${3:?destdir parameter is required}
-    local -r mversion=$(major-version "${version}") || return
+    local -r mversion=$(major_version "${version}") || return
 
     # verify no spaces in the vars we use that could affect splitting
     [[ ${destdir} != *" "* ]] || {
@@ -501,22 +501,22 @@ compile() {
     [[ -n "${MARCH}" ]] && cflags+=("-march=${MARCH}")
 
     echo -n " - compiling"
-    change-dir "$(src-dir "${build_dir}" "${version}")" || return
-    run-clean make CFLAGS="$(join-by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${build_dir}"/compile.log 2>&1
-    stage-complete compile "${build_dir}" $?
+    change_dir "$(src_dir "${build_dir}" "${version}")" || return
+    run_clean make CFLAGS="$(join_by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${build_dir}"/compile.log 2>&1
+    stage_complete compile "${build_dir}" $?
 }
 
 # Run the Python test suite for the Python version given as 2nd param
 # using the already compiled Python source that used the base directory
 # given as the 1st param.
-run-tests() {
+run_tests() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r version=${2:?version parameter is required}
 
-    change-dir "$(src-dir "${build_dir}" "${version}")" || return
+    change_dir "$(src_dir "${build_dir}" "${version}")" || return
     local -r libdir="$(command ls -d -1 build/lib*)" || return
     local -r testclass=$(if [[ "${version:0:1}" = "2" ]]; then echo -n test.regrtest; else echo -n test; fi)
-    run-clean LD_LIBRARY_PATH="${libdir}" ./python -m "${testclass}" > "${build_dir}"/test.log 2>&1 || {
+    run_clean LD_LIBRARY_PATH="${libdir}" ./python -m "${testclass}" > "${build_dir}"/test.log 2>&1 || {
         local -r rc=$?
         echo " - failed with code ${rc}:"
         sed -n -E '/[:digit:]* tests OK\./,$p' < "${build_dir}"/test.log
@@ -534,21 +534,21 @@ install() {
 
     local -r installtarget=$(if [[ "${ALTINSTALL}" = "1" ]]; then echo -n altinstall; else echo -n install; fi;)
     echo -n " - installing"
-    change-dir "$(src-dir "${build_dir}" "${version}")" || return
-    run-clean make "${installtarget}" > "${build_dir}"/install.log 2>&1
-    stage-complete install "${build_dir}" $?
+    change_dir "$(src_dir "${build_dir}" "${version}")" || return
+    run_clean make "${installtarget}" > "${build_dir}"/install.log 2>&1
+    stage_complete install "${build_dir}" $?
 }
 
 # Install Pip if it is not yet installed into the Python directory given
 # as the second param by downloading get-pip.py in the build directory
 # given as the first param and using the target Python to run get-pip.py.
 # The third param should be the version.
-install-pip() {
+install_pip() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r installdir=${2:?installdir parameter is required}
     local -r version=${3:?version parameter is required}
 
-    local -r mversion=$(major-version "${version}") || return
+    local -r mversion=$(major_version "${version}") || return
     local -r bindir="${installdir}/bin"
     local -r pip_bin="${bindir}/pip${mversion}"
 
@@ -557,24 +557,24 @@ install-pip() {
     # is used as the status for this stage as a whole
     if [[ ! -f "${pip_bin}" ]]
     then
-        change-dir "${build_dir}" || return
+        change_dir "${build_dir}" || return
         curl --fail --fail-early -s -LO 'https://bootstrap.pypa.io/get-pip.py' ||
             err " - failed to download get-pip.py [status $?]" ||
             return
-        "${bindir}/python${mversion}" get-pip.py > "${build_dir}"/install-pip.log 2>&1
+        "${bindir}/python${mversion}" get-pip.py > "${build_dir}"/install_pip.log 2>&1
     else
         if [[ "${PIPUPGRADE}" = "1" ]]
         then
             echo -n " - upgrading existing"
-            run-clean "${bindir}/pip${mversion}" install -q -U pip > "${build_dir}"/install-pip.log 2>&1
+            run_clean "${bindir}/pip${mversion}" install -q -U pip > "${build_dir}"/install_pip.log 2>&1
         else
             echo -n " - already installed"
         fi
     fi
-    stage-complete install-pip "${build_dir}" "$?"
+    stage_complete install_pip "${build_dir}" "$?"
 }
 
-install-ipython() {
+install_ipython() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r installdir=${2:?installdir parameter is required}
     local -r version=${3:?version parameter is required}
@@ -583,7 +583,7 @@ install-ipython() {
         err "installdir does not exist: ${installdir}" ||
         return
 
-    local -r mversion=$(major-version "${version}") ||
+    local -r mversion=$(major_version "${version}") ||
         err "invalid version: ${version}" ||
         return
 
@@ -595,26 +595,26 @@ install-ipython() {
         echo -n " - skipping due to NOIPYTHON=1"
     else
         local -r pip_bin="${installdir}/bin/pip${mversion}"
-        local -r ipython_log="${build_dir}"/install-ipython.log
+        local -r ipython_log="${build_dir}"/install_ipython.log
         if [[ ! -f "${installdir}/bin/ipython" ]]
         then
-            run-clean "${pip_bin}" -q install ipython > "${ipython_log}" 2>&1
+            run_clean "${pip_bin}" -q install ipython > "${ipython_log}" 2>&1
         else
             if [[ "${IPYTHONUPGRADE}" = "1" ]]
             then
                 echo -n ' - upgrading existing'
-                run-clean "${pip_bin}" -q install -U ipython > "${ipython_log}" 2>&1
+                run_clean "${pip_bin}" -q install -U ipython > "${ipython_log}" 2>&1
             else
                 echo -n " - already installed"
             fi
         fi
     fi
-    stage-complete install-pip "${build_dir}" $?
+    stage_complete install_pip "${build_dir}" $?
 }
 
 # Install from source a Python version given as the first param to the
 # target directory given as the second parameter.
-install-python-all() {
+install_python_main() {
     local -r version=${1:?version parameter is required}
     local -r installdir="${2:-${PYBASE:-/opt/python}/${version}}"
 
@@ -631,14 +631,14 @@ install-python-all() {
     for arg in "$@"; do
         case "${arg}" in
             -h|--help)
-                show-usage "$(basename "$0")"
+                usage "$(basename "$0")"
                 return 0
         esac
     done
 
     echo " - install dir: ${installdir}"
 
-    local -r mversion=$(major-version "${version}") || return
+    local -r mversion=$(major_version "${version}") || return
     local -r parentdir=$(cd "$(dirname "${installdir}")" && pwd -P)
 
     if [[ ! -d "${installdir}" ]]
@@ -718,7 +718,7 @@ install-python-all() {
         echo
         if [[ ${RUNTESTS} = 1 ]]
         then
-            run-tests "${build_dir}" "${version}" || {
+            run_tests "${build_dir}" "${version}" || {
                 local -r rc=$?
                 case "${TESTFAILOK}" in
                     0) cleanup=0; return $rc;;
@@ -748,7 +748,7 @@ install-python-all() {
         echo " - Python already exists: ${targetpython}"
     fi
 
-    install-pip "${build_dir}" "${installdir}" "${version}" || {
+    install_pip "${build_dir}" "${installdir}" "${version}" || {
         local -r rc=$?
         echo
         cleanup=0  # don't clean up, so user can debug the failure
@@ -756,7 +756,7 @@ install-python-all() {
     }
     echo
 
-    install-ipython "${build_dir}" "${installdir}" "${version}" || {
+    install_ipython "${build_dir}" "${installdir}" "${version}" || {
         local -r rc=$?
         echo
         cleanup=0  # don't clean up
@@ -782,5 +782,5 @@ install-python-all() {
 # interactive use of the functions
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
-   install-python-all "$@"
+   install_python_main "$@"
 fi
