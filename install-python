@@ -104,7 +104,7 @@ ENABLEPYDEBUG="${ENABLEPYDEBUG:-0}"
 
 # If set to 1 (default is 0), then the Python test suite will be run
 # after compiling and before installing.
-RUNTEST="${RUNTESTS:-0}"
+RUNTESTS="${RUNTESTS:-0}"
 
 # If set to 1 (default), then if we run tests and there is a failure,
 # we still continue with remaining tasks. The default is 1, because
@@ -181,36 +181,33 @@ show-usage() {
     echo "       (but the Pip and IPython steps still happen)"
 }
 
+# Echo params to stderr and return with status of last command
+# executed before this function was invoked.
+err() {
+    local -r rc=$?
+    >&2 echo "$@"
+    return $rc
+}
+
 # Join args by delimiter given as 1st param.
 join-by() {
-    set -u
-    local IFS="$1"
+    local IFS="${1:?a delimiter parameter is required}"
     shift
     echo "$*"
-    local join_by_status=$?
-    set +u
-    return "${join_by_status}"
 }
 
 # cd into the directory given as the first param, failing with a helpful
 # error message if unable to cd successfully or if multiple args are passed.
 change-dir() {
-    local -r dirpath=${1:-}
-    if [[ ! -d "${dirpath}" ]]
-    then
-        echo "can't change-dir into non-directory: ${dirpath}"
-        return 1
-    fi
+    local -r dirpath=${1:?directory path parameter is required}
+    [[ -d "${dirpath}" ]] ||
+        err "can't change-dir to non-directory: ${dirpath}" ||
+        return
     shift
-    [[ -z "$*" ]] || {
-        echo "change-dir only accepts one arg"
-        return 1
-    }
-    cd "${dirpath}" || {
-        local -r change_dir_status=$?
-        echo "couldn't cd into directory: ${dirpath}"
-        return "${change_dir_status}"
-    }
+    [[ -z "$*" ]] ||
+        err "change-dir only accepts one arg" ||
+        return
+    cd "${dirpath}" || return
 }
 
 # Get core-count, using '1' if not able to detect OS type
@@ -223,74 +220,57 @@ core-count() {
         return 0
     fi
     case $OSTYPE in
-        darwin*) command sysctl -n machdep.cpu.core_count | tr -d -C '[:digit:]' ;;
-        *) command grep -c -E '^processor\s*:' < /proc/cpuinfo ;;
+        darwin*)
+            command sysctl -n machdep.cpu.core_count | tr -d -C '[:digit:]' ;;
+        *)
+            command grep -c -E '^processor\s*:' < /proc/cpuinfo ;;
     esac
 }
 
 # Interpolate 1st param as version into PACKAGE template defined above.
 package() {
-    local -r version=${1:-}
-    if [[ -z "${version}" ]]
-    then
-        echo "a version is required"
-        return 1
-    fi
+    local -r version=${1:?version parameter is required}
     eval "echo \"${PACKAGE}\""
 }
 
 # Echo first two parts of version given as 1st param (e.g., 3.6 for 3.6.1p0).
 major-version() {
-    local version=${1:-}
-    [[ -n "${version}" ]] || {
-        echo "invalid version: ${version}"
-        return 1
-    }
+    local version=${1:?version parameter is required}
+    [[ -n "${version}" ]] ||
+        err "invalid version: ${version}" ||
+        return
     local result
-    result=$(grep -E -o '^[0-9]+\.[0-9]+' 2>/dev/null <<< "${version}") || {
-        echo "couldn't extract X.Y version from: ${version}"
-        return 1
-    }
+    result=$(grep -E -o '^[0-9]+\.[0-9]+' 2>/dev/null <<< "${version}") ||
+        err "couldn't extract X.Y version from: ${version}" ||
+        return
     echo -n "${result}"
 }
 
 # Echo path to the unpacked Python source directory given the build
 # directory and the version as the first and second params, respectively.
 src-dir() {
-    set -u
-    local -r builddir=$1
-    local -r version=$2
-    local src_dir_status
-    echo "${builddir}/$(basename "$(package "${version}")" ".${EXT}")"
-    src_dir_status=$?
-    set +u
-    return "${src_dir_status}"
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r version=${2:?version parameter is required}
+    local -r _dir="${build_dir}/$(basename "$(package "${version}")" ".${EXT}")" ||
+        return
+    echo -n "${_dir}"
 }
 
 # Echo the URL of the Python source package given version as first param.
 url() {
-    set -u
-    local -r version=$1
-    local url_status
+    local -r version=${1:?version parameter is required}
     eval "echo \"${URL}\""
-    url_status=$?
-    set -u
-    return "${url_status}"
 }
 
 # Run a build command with minimal environment, limited to
 # LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
 # and echoing the exact command to be executed before executing it.
 run-clean() {
-    set -u
     local -r language="${LANGUAGE:-en_US}"
     local -r lang="${LANG:-${language}.UTF-8}"
 
     echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
     env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-    local -r run_status=$?
-    set +u
-    return "${run_status}"
 }
 
 # Check success of stage just completed, and on failure, show log
@@ -299,19 +279,17 @@ run-clean() {
 # install-pip), the second param should be the build dire,
 # and the third param should be the status code of the stage.
 stage-complete() {
-    set -u
-    local -r stage=$1
-    local -r builddir=$2
-    local -r complete_status=$3
+    local -r stage=${1:?stage parameter is required}
+    local -r build_dir=${2:?build_dir parameter is required}
+    local -r complete_status=${3:?complete_status parameter is required}
 
-    if [[ "${complete_status}" != "0" ]]
+    if [[ ${complete_status} != 0 ]]
     then
         echo " - failed with code ${complete_status}:"
-        tail "${builddir}/${stage}.log"
+        tail "${build_dir}/${stage}.log"
         echo
-        echo "See ${builddir}/${stage}.log for more info"
+        echo "See ${build_dir}/${stage}.log for more info"
     fi
-    set +u
     return "${complete_status}"
 }
 
@@ -320,40 +298,29 @@ stage-complete() {
 # must already exist, and the second param should be the version
 # (e.g., 3.6.1).
 download() {
-    local -r builddir=${1:-}
-	local -r version=${2:-}
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r version=${2:?version parameter is required}
 
-    if [[ ! -d "${builddir}" ]]
-    then
-        echo "builddir ${builddir} is not a directory"
-        return 1
-    fi
-    if [[ -z "${version}" ]]
-    then
-        echo "version is required"
-        return 1
-    fi
+    [[ -d "${build_dir}" ]] ||
+        err"build_dir ${build_dir} is not a directory" ||
+        return
 
-    local packageurl
-    packageurl=$(url "${version}") || return $?
-    local packagename
-    packagename=$(package "${version}") || return $?
+    local -r packageurl=$(url "${version}") || return
+    local -r packagename=$(package "${version}") || return
 
     echo -n " - downloading"
-    change-dir "${builddir}" || return $?
-    local download_status
+    change-dir "${build_dir}" || return
     command curl --fail --fail-early -L -s -O "${packageurl}{,.asc}" || {
-        download_status=$?
-        echo " - curl failed to download package or GPG signature file(s) [status ${download_status}]:"
-        echo "   - ${packageurl}"
-        echo "   - ${packageurl}.asc"
-        return "${download_status}"
+        local -r rc=$?
+        true
+        err " - curl failed to download package or GPG signature file(s) [status ${rc}]:"
+        err "   - ${packageurl}"
+        err "   - ${packageurl}.asc"
+        return $rc
     }
-    command gpg --verify "${packagename}.asc" "${packagename}" >/dev/null 2>&1 || {
-        download_status=$?
-        echo " - GPG verification of download failed with status ${download_status}"
-        return "${download_status}"
-    }
+    command gpg --verify "${packagename}.asc" "${packagename}" >/dev/null 2>&1 ||
+        err " - GPG verification of download failed with status $?" ||
+        return
 }
 
 # Unpack the downloaded source package in the same directory that contains
@@ -361,57 +328,43 @@ download() {
 # the package as the first param, and the version as second param.
 # The tar packaged
 unpack() {
-    local -r tarpath=${1:-}
-    if [[ ! -f "${tarpath}" ]]
-    then
-        echo "invalid path to package: ${tarpath}"
-    fi
+    local -r tarpath=${1:?tarpath parameter is required}
+    [[ -f "${tarpath}" ]] ||
+        err "invalid path to package: ${tarpath}" ||
+        return
 
-    local parentdir
-    parentdir=$(dirname "${tarpath}") || return $?
+    local -r parentdir=$(dirname "${tarpath}") || return
 
     echo -n " - unpacking"
-    change-dir "${parentdir}" || return $?
+    change-dir "${parentdir}" || return
 
     local unpack_status
-    tar xf "${tarpath}" || {
-        unpack_status=$?
-        echo " - failed with status ${unpack_status} unpackage package: ${tarpath}"
-        return "${unpack_status}"
-    }
+    tar xf "${tarpath}" ||
+        err " - failed with status ${unpack_status} to unpack package: ${tarpath}" ||
+        return
 }
 
 # Return whether Python configure script in current working directory
 # supports the option passed as the first parameter.
 has-configure-opt() {
-    local -r opt=${1:-}
-    [[ -n "${opt}" ]] || {
-        echo "configure option is required"
-        return 1
-    }
+    local -r opt=${1:?opt parameter is required}
     ./configure --help=short | command grep -- "${opt}" >/dev/null 2>&1
-    return $?
 }
 
 # Run the configure step given params for the build directory in which the
 # source has already been unpacked, the Python version, and the target
 # installation directory, respectively.
 configure() {
-    set -u
-    local -r builddir=$1
-    local -r version=$2
-    local -r destdir=$3
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r version=${2:?version parameter is required}
+    local -r destdir=${3:?destdir parameter is required}
 
-    local -r packagedir=$(src-dir "${builddir}" "${version}")
-    set +u
+    local -r packagedir=$(src-dir "${build_dir}" "${version}") || return
 
     echo -n " - configuring"
-    change-dir "${packagedir}" || return $?
+    change-dir "${packagedir}" || return
 
     local -a copts
-
-
-    set -u
 
     # Some python3 versions have with-wide-unicode, which is the equivalent
     # of --enable-unicode=ucs4 under python2
@@ -464,22 +417,22 @@ configure() {
         copts+=(--with-hash-algorithm=siphash24)
     fi
 
-    if [[ "${ENABLESYSTEMEXPAT}" = "1" ]] && has-configure-opt --with-system-expat
+    if [[ ${ENABLESYSTEMEXPAT} = 1 ]] && has-configure-opt --with-system-expat
     then
         copts+=(--with-system-expat)
     fi
 
-    if [[ "${ENABLESYSTEMFFI}" = "1" ]] && has-configure-opt --with-system-ffi
+    if [[ ${ENABLESYSTEMFFI} = 1 ]] && has-configure-opt --with-system-ffi
     then
         copts+=(--with-system-ffi)
     fi
 
-    if [[ "${ENABLEOPTIMIZATIONS}" = "1" ]] && has-configure-opt --enable-optimizations
+    if [[ ${ENABLEOPTIMIZATIONS} = 1 ]] && has-configure-opt --enable-optimizations
     then
         copts+=(--enable-optimizations)
     fi
 
-    if [[ "${ENABLEPYDEBUG}" = "1" ]]
+    if [[ ${ENABLEPYDEBUG} = 1 ]]
         then
         copts+=(--with-pydebug)
     fi
@@ -496,43 +449,39 @@ configure() {
         --prefix="${destdir}" \
         ${copts[@]} \
         LDFLAGS=-Wl,-z,relro,-z,now,-rpath="${destdir}/lib" \
-        > "${builddir}"/configure.log 2>&1
-    stage-complete configure "${builddir}" $?
+        > "${build_dir}"/configure.log 2>&1
+    stage-complete configure "${build_dir}" $?
 }
 
 # Run the compile step given params for the build directory in which the
 # source has already been unpacked and configured, the Python version, and
 # the target installation directory, respectively.
 compile() {
-    set -u
-    local -r builddir=$1
-    local -r version=$2
-    local -r destdir=$3
-    set +u
-    local mversion
-    local makeflags
-    mversion=$(major-version "${version}") || return $?
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r version=${2:?version parameter is required}
+    local -r destdir=${3:?destdir parameter is required}
+    local -r mversion=$(major-version "${version}") || return
 
     # verify no spaces in the vars we use that could affect splitting
-    [[ ${destdir} = *" "* ]] && {
-        echo "invalid dest dir: ${destdir}"
+    [[ ${destdir} != *" "* ]] || {
+        err "invalid dest dir: ${destdir}"
         return 1
     }
-    [[ ${MARCH} = *" "* ]] && {
-        echo "invalid dest dir: ${MARCH}"
+    [[ ${MARCH} != *" "* ]] || {
+        err "invalid dest dir: ${MARCH}"
         return 1
     }
-    [[ ${MTUNE} = *" "* ]] && {
-        echo "invalid dest dir: ${MTUNE}"
-        return 1
+    [[ ${MTUNE} != *" "* ]] || {
+        err "invalid dest dir: ${MTUNE}"
+        return
     }
 
     # Only set MAKEFLAGS if not already in environment, since we want to
     # honor MAKEFLAGS="" if provided by not using any flags.
+    local makeflags
     if ! command env | grep -E '^MAKEFLAGS=' >/dev/null 2>&1
     then
-        # Compile in parallel using as many processes as proc count.
-        # makeflags="-j$(core-count)"
+        # Compile in parallel (no limit):
         makeflags=-j
     fi
 
@@ -549,53 +498,45 @@ compile() {
         "-DNDEBUG"                   # disable build-time C asserts (required)
         "-I${destdir}/include/python${mversion}:/usr/local/include:/usr/include"
     )
-    if [[ -n "${MARCH}" ]]
-    then
-        cflags+=("-march=${MARCH}")
-    fi
+    [[ -n "${MARCH}" ]] && cflags+=("-march=${MARCH}")
 
     echo -n " - compiling"
-    change-dir "$(src-dir "${builddir}" "${version}")" || return $?
-    run-clean make CFLAGS="$(join-by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${builddir}"/compile.log 2>&1
-    stage-complete compile "${builddir}" $?
+    change-dir "$(src-dir "${build_dir}" "${version}")" || return
+    run-clean make CFLAGS="$(join-by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${build_dir}"/compile.log 2>&1
+    stage-complete compile "${build_dir}" $?
 }
 
 # Run the Python test suite for the Python version given as 2nd param
 # using the already compiled Python source that used the base directory
 # given as the 1st param.
 run-tests() {
-    set -u
-    local -r builddir=$1
-    local -r version=$2
-    set +u
-    change-dir "$(src-dir "${builddir}" "${version}")" || return $?
-    local libdir
-    libdir="$(command ls -d -1 build/lib*)" || return $?
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r version=${2:?version parameter is required}
+
+    change-dir "$(src-dir "${build_dir}" "${version}")" || return
+    local -r libdir="$(command ls -d -1 build/lib*)" || return
     local -r testclass=$(if [[ "${version:0:1}" = "2" ]]; then echo -n test.regrtest; else echo -n test; fi)
-    local teststatus
-    run-clean LD_LIBRARY_PATH="${libdir}" ./python -m "${testclass}" > "${builddir}"/test.log 2>&1
-    teststatus=$?
-    if [[ "${teststatus}" != "0" ]]; then
-        echo " - failed with code ${teststatus}:"
-        sed -n -E '/[:digit:]* tests OK\./,$p' < "${builddir}"/test.log
-        echo "See ${builddir}/test.log for more info"
-    fi
-    return "${teststatus}"
+    run-clean LD_LIBRARY_PATH="${libdir}" ./python -m "${testclass}" > "${build_dir}"/test.log 2>&1 || {
+        local -r rc=$?
+        echo " - failed with code ${rc}:"
+        sed -n -E '/[:digit:]* tests OK\./,$p' < "${build_dir}"/test.log
+        echo "See ${build_dir}/test.log for more info"
+        return $rc
+    }
 }
 
 # Install the already compiled Python that was unpacked, configured,
 # and compiled in the build directory given as the first param, for
 # the specific Python version given as the second param.
 install() {
-    set -u
-    local -r builddir=$1
-    local -r version=$2
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r version=${2:?version parameter is required}
+
     local -r installtarget=$(if [[ "${ALTINSTALL}" = "1" ]]; then echo -n altinstall; else echo -n install; fi;)
-    set +u
     echo -n " - installing"
-    change-dir "$(src-dir "${builddir}" "${version}")" || return $?
-    run-clean make "${installtarget}" > "${builddir}"/install.log 2>&1
-    stage-complete install "${builddir}" $?
+    change-dir "$(src-dir "${build_dir}" "${version}")" || return
+    run-clean make "${installtarget}" > "${build_dir}"/install.log 2>&1
+    stage-complete install "${build_dir}" $?
 }
 
 # Install Pip if it is not yet installed into the Python directory given
@@ -603,99 +544,79 @@ install() {
 # given as the first param and using the target Python to run get-pip.py.
 # The third param should be the version.
 install-pip() {
-    set -u
-    local -r builddir=$1
-    local -r installdir=$2
-    local -r version=$3
-    set +u
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r installdir=${2:?installdir parameter is required}
+    local -r version=${3:?version parameter is required}
 
-    if [[ -z "${version}" ]]
-    then
-        echo "install-pip requires params: builddir installdir version"
-        return 1
-    fi
-    local mversion
-    mversion=$(major-version "${version}") || return $?
-
+    local -r mversion=$(major-version "${version}") || return
     local -r bindir="${installdir}/bin"
     local -r pip_bin="${bindir}/pip${mversion}"
 
     echo -n " - installing Pip"
-    local pip_status
+    # exit status of last command in each path through conditional
+    # is used as the status for this stage as a whole
     if [[ ! -f "${pip_bin}" ]]
     then
-        change-dir "${builddir}" || return $?
-        curl --fail --fail-early -s -LO 'https://bootstrap.pypa.io/get-pip.py' || {
-            local curl_status=$?
-            echo -n " - failed to download get-pip.py [status ${curl_status}]"
-            return "${curl_status}"
-        }
-        "${bindir}/python${mversion}" get-pip.py > "${builddir}"/install-pip.log 2>&1
-        pip_status=$?
+        change-dir "${build_dir}" || return
+        curl --fail --fail-early -s -LO 'https://bootstrap.pypa.io/get-pip.py' ||
+            err " - failed to download get-pip.py [status $?]" ||
+            return
+        "${bindir}/python${mversion}" get-pip.py > "${build_dir}"/install-pip.log 2>&1
     else
         if [[ "${PIPUPGRADE}" = "1" ]]
         then
             echo -n " - upgrading existing"
-            run-clean "${bindir}/pip${mversion}" install -q -U pip > "${builddir}"/install-pip.log 2>&1
-            pip_status=$?
+            run-clean "${bindir}/pip${mversion}" install -q -U pip > "${build_dir}"/install-pip.log 2>&1
         else
             echo -n " - already installed"
-            pip_status=0
         fi
     fi
-    stage-complete install-pip "${builddir}" "${pip_status}"
+    stage-complete install-pip "${build_dir}" "$?"
 }
 
 install-ipython() {
-    set -u
-    local -r builddir=$1
-    local -r installdir=$2
-    local -r version=$3
-    set +u
+    local -r build_dir=${1:?build_dir parameter is required}
+    local -r installdir=${2:?installdir parameter is required}
+    local -r version=${3:?version parameter is required}
 
-    if [[ ! -d "${installdir}" ]]
-    then
-        echo "installdir does not exist: ${installdir}"
-        return 1
-    fi
+    [[ -d "${installdir}" ]] ||
+        err "installdir does not exist: ${installdir}" ||
+        return
 
-    local mversion;
-    mversion=$(major-version "${version}") || {
-        echo "invalid version: ${version}"
-        return 1
-    }
+    local -r mversion=$(major-version "${version}") ||
+        err "invalid version: ${version}" ||
+        return
 
     echo -n " - installing IPython"
-    local ipython_status=0
+    # exit status of last command in each path through conditional
+    # is used as the status for this stage as a whole
     if [[ "${NOIPYTHON}" = "1" ]]
     then
         echo -n " - skipping due to NOIPYTHON=1"
     else
         local -r pip_bin="${installdir}/bin/pip${mversion}"
-        local -r ipython_log="${builddir}"/install-ipython.log
+        local -r ipython_log="${build_dir}"/install-ipython.log
         if [[ ! -f "${installdir}/bin/ipython" ]]
         then
             run-clean "${pip_bin}" -q install ipython > "${ipython_log}" 2>&1
-            ipython_status=$?
         else
             if [[ "${IPYTHONUPGRADE}" = "1" ]]
             then
                 echo -n ' - upgrading existing'
                 run-clean "${pip_bin}" -q install -U ipython > "${ipython_log}" 2>&1
-                ipython_status=$?
             else
                 echo -n " - already installed"
             fi
         fi
     fi
-    stage-complete install-pip "${builddir}" "${ipython_status}"
+    stage-complete install-pip "${build_dir}" $?
 }
 
 # Install from source a Python version given as the first param to the
 # target directory given as the second parameter.
 install-python-all() {
-    local -r version=${1:-}
-    local installdir=${2:-}
+    local -r version=${1:?version parameter is required}
+    local -r installdir="${2:-${PYBASE:-/opt/python}/${version}}"
 
     # this variable is used by the exit trap and determines whether we
     # 'rm -rf' the build directory. If NOCLEAN is 1, then we never cleanup,
@@ -705,13 +626,8 @@ install-python-all() {
     local cleanup
     cleanup=$(if [[ "${NOCLEAN:0}" = "1" ]]; then echo -n 0; else echo -n 1; fi)
 
-    if [[ -z "${version}" ]]
-    then
-        echo "version is required"
-        return 1
-    fi
-
-    # check for -h or --help args
+    # check for -h or --help anywhere in args, and show usage and return if found
+    local arg
     for arg in "$@"; do
         case "${arg}" in
             -h|--help)
@@ -720,25 +636,20 @@ install-python-all() {
         esac
     done
 
-    set -u
-    if [[ -z "${installdir}" ]]
+    echo " - install dir: ${installdir}"
+
+    local -r mversion=$(major-version "${version}") || return
+    local -r parentdir=$(cd "$(dirname "${installdir}")" && pwd -P)
+
+    if [[ ! -d "${installdir}" ]]
     then
-        installdir="${PYBASE}/${version}"
-        echo " - install dir: ${installdir}"
-    fi
-    set +u
-
-    local mversion
-    local arg
-
-    mversion=$(major-version "${version}") || return $?
-
-    local -r parentdir=$(dirname "${installdir}")
-
-    if [[ ! -d "${installdir}" && ! -w "${parentdir}" ]]
-    then
-        echo "directory ${destdir} does not exist or ${parentdir} is not writable"
-        return 1
+        # install dir doesn't exist, so verify that we can write to parent
+        # dir and fail before downloading anything if not
+        if [[ ! -w "${parentdir}" ]]
+        then
+            err "directory ${installdir} does not exist or ${parentdir} is not writable"
+            return
+        fi
     fi
 
     # use mktemp to create a build directory with a friendly name, under
@@ -746,27 +657,25 @@ install-python-all() {
     # the directory, but only change umask this once to keep
     # the temp directory private (but not the contents after they're
     # moved elsewhere outside that directory).
-    local builddir
-    builddir=$(umask 077 && mktemp -d -t install-python-"$(tr . - <<< "${version}")"-XXXXXX) || {
-        local mktemp_status
-        mktemp_status=$?
-        echo "error ${mktemp_status} creating builddir using mktemp -d"
+    local -r build_dir="$(umask 077 && mktemp -d -t install-python-"$(tr . - <<< "${version}")"-XXXXXX)" || {
+        local -r rc=$?
+        echo "error ${rc} creating build_dir using mktemp -d"
         echo "Check \$TMPDIR and verify that it is set to a suitable directory"
-        return "${mktemp_status}"
+        return $rc
     }
 
     # Set up exit trap. We can't use a function without making more variables
     # be globals, so we rely instead on single quoting to not evaluate the
     # trap commands until the trap fires for some non-zero status code.
-    # The handler deletes the builddir we just created if and only if
+    # The handler deletes the build_dir we just created if and only if
     # "${cleanup}" is set to '1', and then it exits with the original
     # failed status.
     # shell-check disable=SC2064,SC2154
-    trap 'local -r rc=$?; if [[ "${cleanup}" = "1" ]]; then command rm -rf "${builddir}"; fi; exit $rc' ERR
+    trap 'local -r rc=$?; if [[ "${cleanup}" = "1" ]]; then command rm -rf "${build_dir}"; fi; exit $rc' ERR
 
     local -r targetpython="${installdir}/bin/python${mversion}"
-    # We build and do the other pre-install steps only in just the i
-    # following cases:
+
+    # Build and do other pre-install steps in the following cases:
     #  1. the target python binary doesn't exist
     #  2. NOINSTALL=1, in which case we don't care whether the target python
     #     binary exists, as we're probably going to run the test suite
@@ -775,7 +684,7 @@ install-python-all() {
     #     at the target location
     if [[ "${CLOBBER}" = "1" || "${NOINSTALL}" = "1" || ! -f "${targetpython}" ]]
     then
-        echo " - build dir: ${builddir}"
+        echo " - build dir: ${build_dir}"
         # most of the commands below follow the same general pattern of
         # running the command and on failure, ensuring the build directory
         # and any built artifacts are kept around (cleanup=0) for
@@ -783,97 +692,88 @@ install-python-all() {
         # configure/compile/install/etc. with different options,
         # and then the original non-zero status is returned to exit
         # this function after 'cleanup=0' has been set.
-        download "${builddir}" "${version}" || {
-            local download_status
-            download_status=$?
+        download "${build_dir}" "${version}" || {
+            local -r rc=$?
             cleanup=0
-            return "${download_status}"
+            return $rc
         }
         echo
-        unpack "${builddir}"/"$(package "${version}")" || {
-            local unpack_status
-            unpack_status=$?
+        unpack "${build_dir}"/"$(package "${version}")" || {
+            local -r rc=$?
             cleanup=0
-            return "${unpack_status}"
+            return $rc
         }
         echo
-        configure "${builddir}" "${version}" "${installdir}" || {
-            local configure_status
-            configure_status=$?
+        configure "${build_dir}" "${version}" "${installdir}" || {
+            local -r rc=$?
             cleanup=0
-            return "${configure_status}"
+            return $rc
         }
         echo
-        compile "${builddir}" "${version}" "${installdir}" || {
-            local compile_status
-            compile_status=$?
+        compile "${build_dir}" "${version}" "${installdir}" || {
+            local -r rc=$?
             cleanup=0
-            return "${compile_status}"
+            return $rc
         }
         echo
-        if [[ "${RUNTESTS}" = "1" ]]
+        if [[ ${RUNTESTS} = 1 ]]
         then
-            run-tests "${builddir}" "${version}" || {
-                local test_status
-                test_status=$?
+            run-tests "${build_dir}" "${version}" || {
+                local -r rc=$?
                 case "${TESTFAILOK}" in
-                    0) cleanup=0; return "${test_status}";;
+                    0) cleanup=0; return $rc;;
                     1) ;;
                     *) echo "ignoring TESTFAILOK with invalid value: ${TESTFAILOK}";;
                 esac
             }
         fi
-        if [[ "${NOINSTALL}" = "1" ]]
+        if [[ ${NOINSTALL} = 1 ]]
         then
             # don't clean up if not installing unless they explicitly asked
             # for it by setting NOCLEAN to 1 (default is 0)
-            if [[ "${NOCLEAN}" != "1" ]]
+            if [[ ${NOCLEAN} != 1 ]]
             then
                 cleanup=0
             fi
             return 0
         fi
-        install "${builddir}" "${version}" || {
-            local install_status
-            install_status=$?
+        install "${build_dir}" "${version}" || {
+            local -r rc=$?
             echo
-            cleanup="0"  # don't clean up if install failed
-            return "${install_status}"
+            cleanup=0  # don't clean up if install failed
+            return $rc
         }
         echo
     else
         echo " - Python already exists: ${targetpython}"
     fi
 
-    install-pip "${builddir}" "${installdir}" "${version}" || {
-        local pip_status
-        pip_status=$?
+    install-pip "${build_dir}" "${installdir}" "${version}" || {
+        local -r rc=$?
         echo
-        cleanup="0"  # don't clean up, so user can debug the failure
-        return "${pip_status}"
+        cleanup=0  # don't clean up, so user can debug the failure
+        return $rc
     }
     echo
 
-    install-ipython "${builddir}" "${installdir}" "${version}" || {
-        local ipython_status
-        ipython_status=$?
+    install-ipython "${build_dir}" "${installdir}" "${version}" || {
+        local -r rc=$?
         echo
-        cleanup="0"  # don't clean up
-        return "${ipython_status}"
+        cleanup=0  # don't clean up
+        return $rc
     }
     echo
 
     # preserve all the logs under a .build directory inside the install dir
-    if test -n "$(find "${builddir}" -maxdepth 1 -name '*.log' -print -quit)"
+    if [[ -n "$(find "${build_dir}" -maxdepth 1 -name '*.log' -print -quit)" ]]
     then
         echo -n " - saving logs to ${installdir}/.build"
-        mkdir -p "${installdir}/.build" || {
-            echo " - couldn't create .build directory"
-            return 1
-        }
+        mkdir -p "${installdir}/.build" ||
+            err " - couldn't create .build directory" ||
+            return
         # copy with preserve if it doesn't exist at target or the
         # the source file is newer than the file in the .build dir
-        cp -p -u "${builddir}"/*.log "${installdir}/.build/"
+        cp -p -u "${build_dir}"/*.log "${installdir}/.build/"
         echo
     fi
 }

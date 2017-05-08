@@ -3,66 +3,76 @@
 # Install Zsh 5.2 or newer, verifying GPG signature, and installing to
 # ZSH_BASE/VERSION, where ZSH_BASE defaults to /opt/zsh if not provided.
 
-EXT="${EXT:-$(if which xz > /dev/null 2>&1 ; then echo -n tar.xz; else echo -n tar.gz; fi)}"
+# This script uses generic bourne-shell syntax and is intended to be free
+# of bashisms and other non-posix extensions that would prevent it being
+# used by any bourne-compatible shell.
+
+# Echo params without the trailing newline (echo -n not defined for POSIX sh).
+echon() {
+    echo "$@" | head -c -1
+}
+
+EXT="${EXT:-$(if which xz > /dev/null 2>&1 ; then echon tar.xz; else echon tar.gz; fi)}"
 ZSH_BASE="${ZSH_BASE:-/opt/zsh}"
 
-# Only Zsh versions 5.2 and newer have GPG signatures on sourceforge.
+# Only Zsh versions 5.2 and newer have GPG signatures on sourceforge, so
+# we don't support older than 5.2, since that would complicate the logic
+# and I don't care about versions older than 5.2 any longer.
 SIGNED_GPG_VERSIONS="5.2"
 
 url_base='https://downloads.sourceforge.net/zsh/zsh'
 
 err() {
+    rc=$?
     >&2 echo "$@"
+    return $rc
 }
 
 precheck() {
-    local program
-    for program in curl tar gpg
+    for prog in curl tar gpg
     do
-        if ! which "${program}" >/dev/null 2>&1
-        then
-            err "ERROR: couldn't find required dependency '${program}' on PATH"
-            return 1
-        fi
+        which "${prog}" >/dev/null 2>&1 ||
+            err "ERROR: couldn't find required dependency '${prog}' on PATH" ||
+            return
     done
 }
 
 prepare() {
-    local source_package=$1
-    local doc_package=$2
-    local version=$3
-    local build_dir=$4
+    source_package=$1
+    doc_package=$2
+    version=$3
+    build_dir=$4
 
-    [ -n "${source_package}" -a -n "${doc_package}" -a -n "${version}" -a -n "${build_dir}" ] || {
+    if [ -z "${source_package}" ] || [  -z "${doc_package}" ] || [ -z "${version}" ] || [ -z "${build_dir}" ]
+    then
         err "usage: prepare source_package doc_package version build_dir"
         return 1
-    }
-    [ -d "${build_dir}" ] || {
-        err "ERROR: invalid directory: ${build_dir}"
-        return 1
-    }
+    fi
 
-    local install_dir="${ZSH_BASE}/${version}"
+    [ -d "${build_dir}" ] ||
+        err "ERROR: invalid directory: ${build_dir}" ||
+        return
+
+    install_dir="${ZSH_BASE}/${version}"
     mkdir -p "${install_dir}" || {
-        local rc=$?
+        rc=$?
         err "ERROR (${rc}): failed to create install dir: ${install_dir}"
-        return "${rc}"
+        return $rc
     }
 
     [ ! -w "${install_dir}}" ] || {
-        local rc=$?
+        rc=$?
         err "ERROR (${rc}): install dir exists but is not writable: ${install_dir}"
         return "${rc}"
     }
 
     cd "${build_dir}" >/dev/null || return $?
-    local url
     for file in "${source_package}" "${source_package}.asc" "${doc_package}" "${doc_package}.asc"
     do
         url="${url_base}/${version}/${file}"
         echo " - downloading: ${url}"
         curl -s --fail -L -g -o "${file}" "${url}" || {
-            local rc=$?
+            rc=$?
             err "ERROR (${rc}): couldn't download file from URL '${url}'"
             return "${rc}"
         }
@@ -70,7 +80,7 @@ prepare() {
 
     echo " - verifying ${source_package}.asc ${source_package}"
     gpg --verify "${source_package}.asc" "${source_package}" > /dev/null 2>&1 || {
-        local rc=$?
+        rc=$?
         echo
         err "ERROR (${rc}): couldn't verify source package '${source_package}' signature '${source_package}.asc'"
         return "${rc}"
@@ -78,7 +88,7 @@ prepare() {
 
     echo " - verifying ${doc_package}.asc ${doc_package}"
     gpg --verify "${doc_package}.asc" "${doc_package}" > /dev/null 2>&1 || {
-        local rc=$?
+        rc=$?
         err "ERROR (${rc}): couldn't verify doc package '${doc_package}' signature '${doc_package}.asc'"
         return "${rc}"
     }
@@ -90,98 +100,83 @@ prepare() {
 }
 
 make_build_dir() {
-    local version=$1
+    version=$1
     [ -n "${version}" ] || {
         err "usage: make_build_dir VERSION"
-        return 1
+        return
     }
 
-    local build_dir
-    build_dir=$(umask 077 && mktemp -d -t install_zsh_"$(echo -n "${version}" | tr . _)"_XXXXXX) || {
-        local rc=$?
-        err "Error ${mktemp_status} creating build dir using mktemp -d"
+    build_dir=$(umask 077 && mktemp -d -t install_zsh_"$(echon "${version}" | tr . _)"_XXXXXX) || {
+        rc=$?
+        err "Error ${rc} creating build dir using mktemp -d"
         err "Check \$TMPDIR and verify that it is set to a suitable directory"
-        return "${rc}"
+        return $rc
     }
-    echo -n "${build_dir}"
+    echon "${build_dir}"
 }
 
 
 run_all() {
-    precheck || return $?
-    local version=$1
-    [ -n "${version}" ] || {
-        err "usage: install_zsh VERSION"
-        return 1
-    }
+    precheck || return
+    version=$1
 
-    if [ "$(awk "BEGIN{ print \"${version}\"<\"5.2\" }" < /dev/null)" -eq 1 ]
-    then
-        >&2 echo "ERROR: only installation of 5.2 and newer is supported"
-        return 1
-    fi
+    [ -n "${version}" ] ||
+        err "usage: install_zsh VERSION" ||
+        return
 
-    local install_dir="${ZSH_BASE}/${version}"
-    if [ -f "${install_dir}/bin/zsh" ]
-    then
-        echo "zsh version already exists: ${install_dir}/bin/zsh"
-        return 1
-    fi
+    [ "$(awk "BEGIN{ print \"${version}\"<\"${SIGNED_GPG_VERSIONS}\" }" < /dev/null)" != "1" ] ||
+        err "ERROR: only installation of ${SIGNED_GPG_VERSIONS} and newer is supported" ||
+        return
 
-    local build_dir
-    build_dir="$(make_build_dir "${version}")" || return $?
+    install_dir="${ZSH_BASE}/${version}"
+    [ ! -f "${install_dir}/bin/zsh" ] ||
+        err "zsh version already exists: ${install_dir}/bin/zsh" ||
+        return
 
-    trap "rc=\$?; set -u; command rm -rf \"${build_dir}\"; exit $rc" 0
+    build_dir="$(make_build_dir "${version}")" || return
+
+    trap 'rc=$?; set -u; command rm -rf "${build_dir}"; exit $rc' 0
 
     echo " - using build dir: ${build_dir}"
     echo " - using install dir: ${install_dir}"
 
-    local source_package="zsh-${version}.${EXT}"
-    local doc_package="zsh-${version}-doc.${EXT}"
+    source_package="zsh-${version}.${EXT}"
+    doc_package="zsh-${version}-doc.${EXT}"
 
-    cd "${build_dir}" >/dev/null || {
-        local rc=$?
-        err "ERROR (${rc}): couldn't cd to build directory '${build_dir}'"
-        return "${rc}"
-    }
+    cd "${build_dir}" >/dev/null ||
+        err "ERROR (${rc}): couldn't cd to build directory '${build_dir}'" ||
+        return
 
-    prepare "${source_package}" "${doc_package}" "${version}" "${build_dir}" || return $?
-    cd "$(basename "${source_package}" ".${EXT}")" >/dev/null || return $?
+    prepare "${source_package}" "${doc_package}" "${version}" "${build_dir}" || return
+    package_dir="$(basename "${source_package}" ".${EXT}")" >/dev/null || return
+    cd "${package_dir}" || return
 
-    echo -n " - configuring"
-     ./configure --prefix="${install_dir}" > "${build_dir}/configure.log" 2>&1 || {
-        local rc=$?
-        err "ERROR (${rc}): configure failed"
-        return "${rc}"
-     }
-     echo
+    echon " - configuring"
+     ./configure --prefix="${install_dir}" > "${build_dir}/configure.log" 2>&1 ||
+        err "ERROR ($?): configure failed" ||
+        return
+    echo
 
-     echo -n " - compiling"
-     make > "${build_dir}/compile.log" 2>&1 || {
-        local rc=$?
-        err "ERROR (${rc}): make failed"
-        return "${rc}"
-     }
-     echo
+    echon " - compiling"
+    make > "${build_dir}/compile.log" 2>&1 ||
+        err "ERROR ($?): make failed" ||
+        return
+    echo
 
-     echo -n " - installing"
-     make install > "${build_dir}/install.log" 2>&1 || {
-        local rc=$?
-        err "ERROR (${rc}): make install failed"
-        return "${rc}"
-     }
-     echo
+    echon " - installing"
+    make install > "${build_dir}/install.log" 2>&1 ||
+        err "ERROR ($?): make install failed" ||
+        return
+    echo
 
-     mkdir "${install_dir}/.build" || {
-        local rc=$?
-        err "ERROR (${rc}): couldn't create ${install_dir}/.build to store logs"
-        return "${rc}"
-     }
+    mkdir "${install_dir}/.build" ||
+        err "ERROR ($?): couldn't create ${install_dir}/.build to store logs" ||
+        return
 
     echo " - storing logs in ${install_dir}/.build"
     if test -n "$(find "${build_dir}" -maxdepth 1 -name '*.log' -print -quit)"
     then
-        cp -p -u "${build_dir}"/*.log "${install_dir}"/.build/ || return $?
+        cp -p -u "${build_dir}"/*.log "${install_dir}"/.build/ || return
     fi
 
     return 0
