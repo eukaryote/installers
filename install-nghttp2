@@ -59,6 +59,10 @@ install_nghttp2_main() {
     run_clean "${make_command[@]}" || return
     mkdir -p "${pythonpath}" || return
     run_clean make PYTHONPATH="${pythonpath}" install || return
+    cd "${NGHTTP2_BASE}" || return
+    if [[ -e default ]] || {
+        ln -sf "${version}" default
+    }
 }
 
 install_nghttp2_main "$@"
