@@ -641,12 +641,10 @@ install_python_main() {
         echo
 
         # add 'default' symlink if installing to standard BASE/VERSION location
-        set -x
         if [[ "${installdir}" = "${PYBASE}/${version}"  ]]
         then
             add_default_symlink "${PYBASE}" "${version}"
         fi
-        set +x
     else
         echo " - Python already exists: ${targetpython}"
     fi
