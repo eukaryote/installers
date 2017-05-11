@@ -29,6 +29,17 @@
 # See the usage info for all options that are configurable
 # by environment variables (e.g., install-python --help).
 
+# Source utils if running as a script (not source ourselves). This is
+# at the top so that variables and functions defined in this module override
+# any defined in the util script that have the same name.
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
+        >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
+        exit 1
+    }
+fi
+
 # The container directory for different Python versions that are installed
 # when no target directory is specificed.
 PYBASE="${PYBASE:-/opt/python}"
@@ -127,7 +138,6 @@ ALTINSTALL="${ALTINSTALL:-0}"
 # install step (but Pip and IPython proceed as normally).
 CLOBBER="${CLOBBER:-0}"
 
-
 usage() {
     echo "usage: ${1:-install-python} VERSION [INSTALLDIR]"
     echo
@@ -181,52 +191,6 @@ usage() {
     echo "       (but the Pip and IPython steps still happen)"
 }
 
-# Echo params to stderr and return with status of last command
-# executed before this function was invoked.
-err() {
-    local -r rc=$?
-    >&2 echo "$@"
-    return $rc
-}
-
-# Join args by delimiter given as 1st param.
-join_by() {
-    local IFS="${1:?a delimiter parameter is required}"
-    shift
-    echo "$*"
-}
-
-# cd into the directory given as the first param, failing with a helpful
-# error message if unable to cd successfully or if multiple args are passed.
-change_dir() {
-    local -r dirpath=${1:?directory path parameter is required}
-    [[ -d "${dirpath}" ]] ||
-        err "can't change_dir to non-directory: ${dirpath}" ||
-        return
-    shift
-    [[ -z "$*" ]] ||
-        err "change_dir only accepts one arg" ||
-        return
-    cd "${dirpath}" || return
-}
-
-# Get core_count, using '1' if not able to detect OS type
-core_count() {
-    if [[ -z "${OSTYPE:-}" ]]
-    then
-        # OSTYPE is a predefined Bash variable, so should be available,
-        # but use core count of 1 if not defined rather than failing
-        echo -n 1
-        return 0
-    fi
-    case $OSTYPE in
-        darwin*)
-            command sysctl -n machdep.cpu.core_count | tr -d -C '[:digit:]' ;;
-        *)
-            command grep -c -E '^processor\s*:' < /proc/cpuinfo ;;
-    esac
-}
-
 # Interpolate 1st param as version into PACKAGE template defined above.
 package() {
     local -r version=${1:?version parameter is required}
@@ -262,93 +226,19 @@ url() {
     eval "echo \"${URL}\""
 }
 
-# Run a build command with minimal environment, limited to
-# LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
-# and echoing the exact command to be executed before executing it.
-run_clean() {
-    local -r language="${LANGUAGE:-en_US}"
-    local -r lang="${LANG:-${language}.UTF-8}"
-
-    echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-    env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-}
-
-# Check success of stage just completed, and on failure, show log
-# info and return with the original status.
-# The first param should be a stage (configure, compile, install, or
-# install_pip), the second param should be the build dire,
-# and the third param should be the status code of the stage.
-stage_complete() {
-    local -r stage=${1:?stage parameter is required}
-    local -r build_dir=${2:?build_dir parameter is required}
-    local -r complete_status=${3:?complete_status parameter is required}
-
-    if [[ ${complete_status} != 0 ]]
-    then
-        echo " - failed with code ${complete_status}:"
-        tail "${build_dir}/${stage}.log"
-        echo
-        echo "See ${build_dir}/${stage}.log for more info"
-    fi
-    return "${complete_status}"
-}
-
-# Download Python source package using cUrl.
-# The first param should be the directory to download into, which
-# must already exist, and the second param should be the version
-# (e.g., 3.6.1).
-download() {
+# Download Python source package and signature using cUrl.
+# The first param should be the directory to download into, which must
+# already exist, and the second param should be the version (e.g., 3.6.1).
+download_package_and_signature() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r version=${2:?version parameter is required}
 
-    [[ -d "${build_dir}" ]] ||
-        err"build_dir ${build_dir} is not a directory" ||
-        return
+    verify_dir "${build_dir}" || return
 
     local -r packageurl=$(url "${version}") || return
-    local -r packagename=$(package "${version}") || return
 
     echo -n " - downloading"
-    change_dir "${build_dir}" || return
-    command curl --fail --fail-early -L -s -O "${packageurl}{,.asc}" || {
-        local -r rc=$?
-        true
-        err " - curl failed to download package or GPG signature file(s) [status ${rc}]:"
-        err "   - ${packageurl}"
-        err "   - ${packageurl}.asc"
-        return $rc
-    }
-    command gpg --verify "${packagename}.asc" "${packagename}" >/dev/null 2>&1 ||
-        err " - GPG verification of download failed with status $?" ||
-        return
-}
-
-# Unpack the downloaded source package in the same directory that contains
-# the tarball and which should be given as the first param
-# the package as the first param, and the version as second param.
-# The tar packaged
-unpack() {
-    local -r tarpath=${1:?tarpath parameter is required}
-    [[ -f "${tarpath}" ]] ||
-        err "invalid path to package: ${tarpath}" ||
-        return
-
-    local -r parentdir=$(dirname "${tarpath}") || return
-
-    echo -n " - unpacking"
-    change_dir "${parentdir}" || return
-
-    local unpack_status
-    tar xf "${tarpath}" ||
-        err " - failed with status ${unpack_status} to unpack package: ${tarpath}" ||
-        return
-}
-
-# Return whether Python configure script in current working directory
-# supports the option passed as the first parameter.
-has_configure_opt() {
-    local -r opt=${1:?opt parameter is required}
-    ./configure --help=short | command grep -- "${opt}" >/dev/null 2>&1
+    download_and_verify "${packageurl}" "${packageurl}.asc" "${build_dir}"
 }
 
 # Run the configure step given params for the build directory in which the
@@ -502,7 +392,12 @@ compile() {
 
     echo -n " - compiling"
     change_dir "$(src_dir "${build_dir}" "${version}")" || return
-    run_clean make CFLAGS="$(join_by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${build_dir}"/compile.log 2>&1
+
+    local make_command=()
+    local -r ccache="$(which ccache 2>/dev/null)"
+    [[ -s "${ccache}" ]] && make_command+=(ccache)
+    make_command+=(make)
+    run_clean "${make_command[@]}" CFLAGS="$(join_by ' ' "${cflags[@]}")" "${makeflags[@]}" > "${build_dir}"/compile.log 2>&1
     stage_complete compile "${build_dir}" $?
 }
 
@@ -616,7 +511,7 @@ install_ipython() {
 # target directory given as the second parameter.
 install_python_main() {
     local -r version=${1:?version parameter is required}
-    local -r installdir="${2:-${PYBASE:-/opt/python}/${version}}"
+    local -r installdir="${2:-${PYBASE}/${version}}"
 
     # this variable is used by the exit trap and determines whether we
     # 'rm -rf' the build directory. If NOCLEAN is 1, then we never cleanup,
@@ -692,7 +587,7 @@ install_python_main() {
         # configure/compile/install/etc. with different options,
         # and then the original non-zero status is returned to exit
         # this function after 'cleanup=0' has been set.
-        download "${build_dir}" "${version}" || {
+        download_package_and_signature "${build_dir}" "${version}" || {
             local -r rc=$?
             cleanup=0
             return $rc
@@ -744,6 +639,14 @@ install_python_main() {
             return $rc
         }
         echo
+
+        # add 'default' symlink if installing to standard BASE/VERSION location
+        set -x
+        if [[ "${installdir}" = "${PYBASE}/${version}"  ]]
+        then
+            add_default_symlink "${PYBASE}" "${version}"
+        fi
+        set +x
     else
         echo " - Python already exists: ${targetpython}"
     fi
@@ -778,9 +681,8 @@ install_python_main() {
     fi
 }
 
-# run only if not sourced, so this script can be sourced for
-# interactive use of the functions
+# run only if not sourced, so this script can be sourced for interactive use
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
-   install_python_main "$@"
+    install_python_main "$@"
 fi

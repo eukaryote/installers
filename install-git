@@ -2,36 +2,44 @@
 
 set -uo pipefail
 
+# Source utils if running as a script (not source ourselves). This is
+# at the top so that variables and functions defined in this module override
+# any defined in the util script that have the same name.
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
+        >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
+        exit 1
+    }
+fi
+
 REPOS="${REPOS:-$HOME/repos}"
 GIT_BASE="${GIT_BASE:-/opt/git}"
 
-# Run a build command with minimal environment, limited to
-# LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
-# and echoing the exact command to be executed before executing it.
-run_clean() {
-    local -r language="${LANGUAGE:-en_US}"
-    local -r lang="${LANG:-${language}.UTF-8}"
-
-    echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-    env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-}
-
 install_git_main() {
     local -r version="${1:?version param is required}"
-    local -r install_dir="${GIT_BASE}/${version}"
 
-    cd "${REPOS}/git" || {
-        local -r rc=$?
-        >&2 echo "ERROR: Git repo not found at expected location: ${REPOS}/git"
-        return $rc
-    }
-    git checkout "v${version}" || {
-        local -r rc=$?
-        >&2 echo "ERROR: error checking out git version v${version}"
-        return $rc
-    }
-    run_clean make CURLDIR="${REPOS}/curl" prefix="${install_dir}" all doc info || return
+    cd "${REPOS}/git" ||
+        err "Git repo not found at expected location: ${REPOS}/git" ||
+        return
+
+    git checkout "v${version}" ||
+        err "failed ($?) to checkout git version v${version}" ||
+        return
+
+    local make_command=()
+    local -r ccache="$(which ccache 2>/dev/null)"
+    [[ -s "${ccache}" ]] && make_command+=(ccache)
+    make_command+=(make)
+
+    local -r install_dir="${GIT_BASE}/${version}"
+    run_clean "${make_command[@]}" CURLDIR="${REPOS}/curl" prefix="${install_dir}" all doc info || return
     run_clean make prefix="${install_dir}" install install-doc install-html install-info || return
+    add_default_symlink "${GIT_BASE}" "${version}"
 }
 
-install_git_main "$@"
+# run only if not sourced, so this script can be sourced for interactive use
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    install_git_main "$@"
+fi

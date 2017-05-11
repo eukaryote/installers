@@ -5,16 +5,16 @@ set -o pipefail
 REPOS="${REPOS:-$HOME/repos}"
 NGHTTP2_BASE="${NGHTTP2_BASE:-/opt/nghttp2}"
 
-# Run a build command with minimal environment, limited to
-# LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
-# and echoing the exact command to be executed before executing it.
-run_clean() {
-    local -r language="${LANGUAGE:-en_US}"
-    local -r lang="${LANG:-${language}.UTF-8}"
-
-    echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-    env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-}
+# Source utils if running as a script (not source ourselves). This is
+# at the top so that variables and functions defined in this module override
+# any defined in the util script that have the same name.
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
+        >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
+        exit 1
+    }
+fi
 
 get_python_version() {
     local -r full_version=$(run_clean python --version 2>&1 | tail -n 1 | grep -E -o '(\.|[[:digit:]])+' | tr -d '\s')
@@ -59,10 +59,11 @@ install_nghttp2_main() {
     run_clean "${make_command[@]}" || return
     mkdir -p "${pythonpath}" || return
     run_clean make PYTHONPATH="${pythonpath}" install || return
-    cd "${NGHTTP2_BASE}" || return
-    if [[ -e default ]] || {
-        ln -sf "${version}" default
-    }
+    add_default_symlink "${NGHTTP2_BASE}" "${version}"
 }
 
-install_nghttp2_main "$@"
+# run only if not sourced, so this script can be sourced for interactive use
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    install_nghttp2_main "$@"
+fi

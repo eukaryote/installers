@@ -2,20 +2,20 @@
 
 set -o pipefail
 
+# Source utils if running as a script (not source ourselves). This is
+# at the top so that variables and functions defined in this module override
+# any defined in the util script that have the same name.
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
+        >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
+        exit 1
+    }
+fi
+
 REPOS="${REPOS:-$HOME/repos}"
 CURL_BASE="${CURL_BASE:-/opt/curl}"
 NGHTTP2_BASE="${NGHTTP2_BASE:-/opt/nghttp2}"
-
-# Run a build command with minimal environment, limited to
-# LANG, LANGUAGE, and a minimal PATH containing just /usr/bin and /bin,
-# and echoing the exact command to be executed before executing it.
-run_clean() {
-    local -r language="${LANGUAGE:-en_US}"
-    local -r lang="${LANG:-${language}.UTF-8}"
-
-    echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-    env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-}
 
 install_curl_main() {
     local -r curl_version="${1:?curl_version param is required}"
@@ -25,26 +25,23 @@ install_curl_main() {
     local -r nghttp2_dir="${NGHTTP2_BASE}/${nghttp2_version}"
     local -r curl_tag="curl-$(echo -n "${curl_version}" | tr '.' '_')"
 
-    [ -d "${nghttp2_dir}" ] || {
-        local rc=$?
-        >&2 echo "ERROR: couldn't find nghttp2 install at expected loction: ${nghttp2_dir}"
-        return $rc
-    }
+    [ -d "${nghttp2_dir}" ] ||
+        err "ERROR: couldn't find nghttp2 install at expected loction: ${nghttp2_dir}" ||
+        return
 
-    cd "${REPOS}/curl" || {
-        local -r rc=$?
-        >&2 echo "ERROR: Git repo not found at expected location: ${REPOS}/curl"
-        return $rc
-    }
-    git checkout "${curl_tag}" || {
-        local -r rc=$?
-        >&2 echo "ERROR: error checking out git version ${curl_tag}"
-        return $rc
-    }
+    cd "${REPOS}/curl" ||
+        err "ERROR: Git repo not found at expected location: ${REPOS}/curl" ||
+        return
+
+    git checkout "${curl_tag}" ||
+        err "ERROR: error checking out git version ${curl_tag}" ||
+        return
 
     command mkdir -p "${install_dir}" || return
 
-    run_clean ./configure --prefix="${install_dir}" --with-nghttp2="${nghttp2_dir}" --with-ssl --disable-shared || return
+    run_clean ./configure --prefix="${install_dir}" --with-nghttp2="${nghttp2_dir}" --with-ssl --disable-shared ||
+        err "ERROR: configure failed" ||
+        return
 
     local make_command=()
     local -r ccache="$(which ccache 2>/dev/null)"
@@ -53,11 +50,11 @@ install_curl_main() {
     make_command+=(make)
     run_clean "${make_command[@]}" || return
     run_clean make install || return
-
-    cd "${CURL_BASE}" || return
-    [[ -e default ]] || {
-        ln -sf "${curl_version}" default
-    }
+    add_default_symlink "${CURL_BASE}" "${curl_version}"
 }
 
-install_curl_main "$@"
+# run only if not sourced, so this script can be sourced for interactive use
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    install_curl_main "$@"
+fi
