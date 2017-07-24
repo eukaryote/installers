@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+GPG_BASE="${GPG_BASE:-/opt/gpg}"
+GPG_VERSION="${GPG_VERSION:-2.1.21}"
+GPG_VERSION_DIR="${GPG_VERSION_DIR:-/opt/gpg/${GPG_VERSION}}"
+
+# latest versions of deps as of 2017-07-23:
+deps=(
+    https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-1.0.0.tar.bz2
+    https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-2.4.3.tar.bz2
+    https://www.gnupg.org/ftp/gcrypt/npth/npth-1.5.tar.bz2
+    https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.0.tar.bz2
+    https://www.gnupg.org/ftp/gcrypt/libksba/libksba-1.3.5.tar.bz2
+    https://www.gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.27.tar.bz2
+    https://www.gnupg.org/ftp/gcrypt/gnupg/gnupg-${GPG_VERSION}.tar.bz2
+)
+
+
+fetchdeps() {
+    local -r basedir="${1?basedir required}"
+    cd "${basedir}" || return 1
+
+    for dep in "${deps[@]}"
+    do
+        local name="$(basename ${dep})"
+        curl -q -L -o "${name}" "${dep}" || {
+            local rc=$?
+            &>2 echo "couldn't download tarball: ${dep}"
+            return $rc
+        }
+        curl -q -L -o "${name}.sig" "${dep}.sig" || {
+            local rc=$?
+            >&2 echo "couldn't download tarball signature: ${dep}.sig"
+            return $rc
+        }
+        gpg -q --verify "${name}.sig" "${name}" >/dev/null 2>&1 || {
+            local rc=$?
+            >&2 echo "couldn't verify: ${name}.sig ${name}"
+            return $rc
+        }
+        tar xf "${name}" || {
+            local rc=$?
+            >&2 echo "couldn't extract tarball: ${name}"
+            return $rc
+        }
+    done
+}
+
+main() {
+    local -r workdir="$(mktemp -d)"
+    local -r cflags="-fPIC -fstack-protector-strong --param=ssp-buffer-size=4 -Wp,-D_FORTIFY_SOURCE=2 -Wstrict-prototypes -Wformat -Wformat-security -mtune=generic"
+    local -r ldflags="-Wl,-z,relro,-z,now,-rpath='${GPG_VERSION_DIR}/lib'"
+
+    cd "${workdir}"
+    fetchdeps "${workdir}" || return 1
+
+
+    cd npth* || return 1
+    ./configure --prefix="${GPG_VERSION_DIR}" LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd .. || return 1
+
+    cd libgpg-error* || return 1
+    ./configure \
+        --prefix="${GPG_VERSION_DIR}" \
+        LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd ..
+
+    cd libassuan* || return 1
+    ./configure \
+        --prefix="${GPG_VERSION_DIR}" \
+        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd ..
+
+    cd pinentry* || return 1
+    ./configure \
+        --prefix="${GPG_VERSION_DIR}" \
+        --with-libassuan-prefix="${GPG_VERSION_DIR}" \
+        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd ..
+
+    cd libksba* || return 1
+    ./configure \
+        --prefix="${GPG_VERSION_DIR}" \
+        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd ..
+
+    cd libgcrypt* || return 1
+    ./configure \
+        --prefix="${GPG_VERSION_DIR}" \
+        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd ..
+
+    cd gnupg* || return 1
+    ./configure \
+        --prefix="${GPG_VERSION_DIR}" \
+        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        --with-libgcrypt-prefix="${GPG_VERSION_DIR}" \
+        --with-libassuan-prefix="${GPG_VERSION_DIR}" \
+        --with-ksba-prefix="${GPG_VERSION_DIR}" \
+        --with-npth-prefix="${GPG_VERSION_DIR}" \
+        --with-ntbtls-prefix="${GPG_VERSION_DIR}" \
+        LDFLAGS="${ldflags}" || return 1
+    make CFLAGS="${cflags}" || return 1
+    make install || return 1
+    cd ..
+}
+
+main
