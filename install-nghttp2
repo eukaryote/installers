@@ -1,9 +1,41 @@
 #!/usr/bin/env bash
 
+# Installer script for nghttp2.
+#
+# Given an arg such as '1.22.0' or 'latest', this script clones (if not
+# cloned already) the nghttp2 git repo to "${REPOS}/nghttp2" (creating
+# ${REPOS} if necessary, which defaults to ${HOME}/repos),
+# checks out the specified tag (version is resolved to the latest actual
+# tag in the repo if 'latest' is provided), and then compiles and installs
+# nghttp2 to "${NGHTTP2_BASE}/${resolved_version}", where NGHTTP2_BASE
+# defaults to '/opt/nghttp2', and the resolved_version would be the actual
+# numeric version installed, such as '1.22.0'.
+#
+# If the installation target directory exists and is non-empty, then
+# it will not be overwritten, so remove it first to reinstall.
+#
+# By default, this script will not compile the Python bindings for
+# nghttp2. To build and install the bindings, set NGHTTP2_PYTHON
+# to the full path of the python executable to build for, and the
+# script will build the bindings and install them into a site-packages
+# directory for that python in the nghttp2 installation, using 'python-config'
+# (or python3-config, etc.) utility to determine the correct build options for
+# that python installation. In order to use the resulting bindings with the
+# existing Python, you'll need to set the LD_LIBRARY_PATH to include the
+# lib directory that contains the bindings, for example:
+#
+# LD_LIBRARY_PATH=/opt/nghttp2/1.24.0/lib \
+#   PYTHONPATH=/opt/nghttp2/1.24.0/lib/python3.6/site-packages \
+#   /opt/python/3.6.1/bin/python3
+#
+# That command assumes that the bindings were built and installed
+# to /opt/nghttp2/1.24.0 with NGHTTP2_PYTHON=/opt/python/3.6.1/bin/python3.
+
 set -o pipefail
 
 REPOS="${REPOS:-$HOME/repos}"
 NGHTTP2_BASE="${NGHTTP2_BASE:-/opt/nghttp2}"
+NGHTTP2_PYTHON="${NGHTTP2_PYTHON:-}"
 
 # Source utils if running as a script (not source ourselves). This is
 # at the top so that variables and functions defined in this module override
@@ -16,54 +48,138 @@ then
     }
 fi
 
-get_python_version() {
-    local -r full_version=$(run_clean python --version 2>&1 | tail -n 1 | grep -E -o '(\.|[[:digit:]])+' | tr -d '\s')
-    echo -n "${full_version}" | command grep -E -o '[[:digit:]]+\.[[:digit:]]+'
+# Get the latest tag using the version sort of 'sort -V', assuming version
+# tags all start with 'v' and current working directory is the git repo.
+get_latest_tag() {
+    local tag
+    tag=$(git tag -l | grep '^v' | sort -V | tail -n 1)
+
+    if [[ ! "${tag}" =~ v.* ]]
+    then
+        err "ERROR: couldn't determine latest tag"
+        return 1
+    fi
+    echo -n "${tag}"
 }
 
+# Resolve the version tag, which may be 'latest' or a number such as
+# '1.24.0', to the tag for that version, which will be something like
+# 'v1.24.0'.
+get_version_tag() {
+    local version="${1:?version param is required}"
+    if [[ "${version}" = "latest" ]]
+    then
+        get_latest_tag
+    else
+        [[ "${version}" =~ ^[0-9].* ]] ||
+            err "ERROR: invalid version '${version}': should be something like 1.24.0" ||
+            return 1
+        git tag -l | grep -E "^v${version}\$" >/dev/null 2>&1 ||
+            err "no tag found for version ${version}"
+            return 1
+        echo -n "v${version}"
+    fi
+}
+
+# Fetch and install nghttp2 version given by first param, which may be
+# a number like '1.24.0' or 'latest'.
 install_nghttp2_main() {
-    local -r version="${1:?version param is required}"
+    local version="${1:?version param is required}"
+
+    mkdir -p "${REPOS}" || return
+
+    cd "${REPOS}" || return
+
+    if [[ ! -e nghttp2 ]]
+    then
+        git clone --quiet https://github.com/nghttp2/nghttp2.git nghttp2 >/dev/null || return
+        cd nghttp2 || return
+    else
+        [[ -d nghttp2 ]] ||
+            err "ERROR: ${REPOS}/nghttp2 exists but is not a directory" ||
+            return 1
+        cd nghttp2 || return
+        git checkout --quiet master || return
+        git pull --quiet --rebase --autostash --tags >/dev/null || return
+    fi
+
+    local version_tag
+    version_tag=$(get_version_tag "${version}") || return
+
+    if [[ "${version}" = "latest" ]]
+    then
+        version="${version_tag:1}"
+        echo "Using latest version: ${version}"
+    fi
+
     local -r install_dir="${NGHTTP2_BASE}/${version}"
 
-    local -r python_version=$(get_python_version) || {
-        local -r rc=$?
-        >&2 echo "ERROR: couldn't determine python version"
-        return $rc
-    }
-    local -r pythonpath="${install_dir}/lib/python${python_version}/site-packages"
+    if [[ -n "$(ls -A "${install_dir}/*" 2> /dev/null)" ]]
+    then
+        echo "nghttp2 version ${version} already installed: ${install_dir}"
+        return 0
+    fi
 
-    cd "${REPOS}/nghttp2" || {
-        local -r rc=$?
-        >&2 echo "ERROR: Git repo not found at expected location: ${REPOS}/nghttp2"
-        return $rc
-    }
-    command git checkout "v${version}" || {
-        local -r rc=$?
-        >&2 echo "ERROR: error checking out git version v${version}"
-        return $rc
-    }
-
+    # create dir now if needed to avoid continuing if unable to create
     command mkdir -p "${install_dir}" || return
+
+    command git checkout --quiet "${version_tag}" ||
+        err "ERROR: error checking out git version tag ${version_tag}" ||
+        return
+
     command git submodule update --init || return
+
     run_clean autoreconf -i || return
     run_clean automake || return
     run_clean autoconf || return
-    run_clean ./configure \
-        PYTHONPATH="${pythonpath}" \
-        --prefix="${install_dir}" || \
-        return
+
+    local install_args=()
+
+    if [[ -n "${NGHTTP2_PYTHON}" ]]
+    then
+        "${NGHTTP2_PYTHON}" -V >/dev/null 2>&1 || {
+            err "ERROR: '${NGHTTP2_PYTHON}' -V failed"
+            return 1
+        }
+        echo "Using Python: ${NGHTTP2_PYTHON}"
+        "${NGHTTP2_PYTHON}-config" --prefix >/dev/null 2>&1 || {
+            err "ERROR: ${NGHTTP2_PYTHON}-config failed"
+            return 1
+        }
+        run_clean ./configure \
+            PYTHON="${NGHTTP2_PYTHON}" \
+            LDFLAGS="$(${NGHTTP2_PYTHON}-config --ldflags)" \
+            LIBS="$(${NGHTTP2_PYTHON}-config --libs)" \
+            CFLAGS="$(${NGHTTP2_PYTHON}-config --includes)" \
+            --prefix="${install_dir}" || return
+        local pylibdir
+        pylibdir=$(get_python_lib_dir "${NGHTTP2_PYTHON}") || return
+        local pythonpath
+        pythonpath="${install_dir}"/lib/"$(basename "${pylibdir}")"/site-packages || return
+        mkdir -p "${pythonpath}" || return
+        install_args+=(PYTHONPATH="${pythonpath}")
+    else
+        run_clean ./configure \
+            --disable-python-bindings \
+            --prefix="${install_dir}" || return
+    fi
+
     local make_command=()
     local -r ccache="$(which ccache 2>/dev/null)"
-    [[ -s "${ccache}" ]] && make_command+=(ccache)
-    make_command+=(make)
+    [[ -s "${ccache}" ]] && { make_command+=(ccache) || return; }
+    make_command+=(make) || return
     run_clean "${make_command[@]}" || return
-    mkdir -p "${pythonpath}" || return
-    run_clean make PYTHONPATH="${pythonpath}" install || return
+    run_clean "${install_args[@]}" make install || return
     add_default_symlink "${NGHTTP2_BASE}" "${version}"
 }
 
 # run only if not sourced, so this script can be sourced for interactive use
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
-    install_nghttp2_main "$@"
+    if [[ -n "$*" ]]
+    then
+        install_nghttp2_main "$@"
+    else
+        install_nghttp2_main latest
+    fi
 fi
