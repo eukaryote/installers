@@ -17,25 +17,48 @@ REPOS="${REPOS:-$HOME/repos}"
 CURL_BASE="${CURL_BASE:-/opt/curl}"
 NGHTTP2_BASE="${NGHTTP2_BASE:-/opt/nghttp2}"
 
+
 install_curl_main() {
-    local -r curl_version="${1:?curl_version param is required}"
-    local -r nghttp2_version="${2:?nghttp2_version param is required}"
+    local curl_version="${1:?curl_version param is required}"
+    local nghttp2_version="${2:-default}"
+
+    local -r curl_dir="${REPOS}/curl"
+    cd "${REPOS}" || return
+
+    if [[ ! -d "${curl_dir}" ]]
+    then
+        command git clone --quiet https://github.com/curl/curl.git curl || return
+        cd curl || return
+    else
+        cd curl || return
+        command git checkout --quiet master
+        command git pull --quiet --rebase --autostash --tags >/dev/null || return
+    fi
+
+    local curl_tag
+
+    if [[ "${curl_version}" = "latest" ]]
+    then
+        curl_tag=$(get_latest_tag "${REPOS}"/curl "curl-") ||
+            err "ERROR: couldn't determine latest curl version"||
+            return
+        curl_version=$(echo -n "${curl_tag}" | command grep -E -o '[0-9][-0-9\._]+' | tr '_' '.')
+        echo "Using latest Curl version: ${curl_version}"
+    else
+        curl_tag="curl-$(tr '.' '_' <<<"${curl_version}")"
+    fi
 
     local -r install_dir="${CURL_BASE}/${curl_version}"
     local -r nghttp2_dir="${NGHTTP2_BASE}/${nghttp2_version}"
-    local -r curl_tag="curl-$(echo -n "${curl_version}" | tr '.' '_')"
 
     [ -d "${nghttp2_dir}" ] ||
         err "ERROR: couldn't find nghttp2 install at expected loction: ${nghttp2_dir}" ||
         return
 
-    cd "${REPOS}/curl" ||
-        err "ERROR: Git repo not found at expected location: ${REPOS}/curl" ||
-        return
-
-    git checkout "${curl_tag}" ||
-        err "ERROR: error checking out git version ${curl_tag}" ||
-        return
+    if [[ "${nghttp2_version}" = "default" ]]
+    then
+        echo "Using existing nghttp version: $(${nghttp2_dir}/bin/nghttp --version | command grep -E -o '/.*$' | command tail -c '+2')"
+    fi
 
     command mkdir -p "${install_dir}" || return
 
@@ -60,5 +83,10 @@ install_curl_main() {
 # run only if not sourced, so this script can be sourced for interactive use
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
-    install_curl_main "$@"
+    if [[ -n "$*" ]]
+    then
+        install_curl_main "$@"
+    else
+        install_curl_main latest default
+    fi
 fi
