@@ -86,7 +86,7 @@ install_nghttp2_main() {
             return 1
         cd nghttp2 || return
         command git checkout --quiet master || return
-        command git pull --quiet --rebase --autostash --tags >/dev/null || return
+        command git pull --quiet --rebase --autostash --tags || return
     fi
 
     local version_tag
