@@ -262,3 +262,27 @@ download_and_verify() {
     download "${download_dir}" "${signature}" "${package}" || return
     gpg_verify "$(basename "${signature}")" "$(basename ${package})" || return
 }
+
+# Get the latest tag for Git repo dir provided as param 1 by using
+# 'git tag -l' and an optional prefix regex provided as param 2,
+# using 'sort -V' to determine the latest version number.
+get_latest_tag() {
+    local repo="${1:?repo directory is required}"
+    local prefix="${2:-.}"
+    local tag
+
+    tag=$(cd "${repo}" && command git tag -l | \
+        command grep -E "^${prefix}" | \
+        command sort -V | \
+        command tail -n 1 \
+    ) || {
+        err "ERROR: couldn't list tags for repo: ${repo}"
+        return 1
+    }
+
+    [[ -n "${tag}" ]] ||
+        err "ERROR: couldn't determine latest tag for repo: ${repo}" ||
+        return 1
+
+    echo -n "${tag}"
+}

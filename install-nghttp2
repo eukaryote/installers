@@ -48,20 +48,6 @@ then
     }
 fi
 
-# Get the latest tag using the version sort of 'sort -V', assuming version
-# tags all start with 'v' and current working directory is the git repo.
-get_latest_tag() {
-    local tag
-    tag=$(git tag -l | grep '^v' | sort -V | tail -n 1)
-
-    if [[ ! "${tag}" =~ v.* ]]
-    then
-        err "ERROR: couldn't determine latest tag"
-        return 1
-    fi
-    echo -n "${tag}"
-}
-
 # Resolve the version tag, which may be 'latest' or a number such as
 # '1.24.0', to the tag for that version, which will be something like
 # 'v1.24.0'.
@@ -69,7 +55,7 @@ get_version_tag() {
     local version="${1:?version param is required}"
     if [[ "${version}" = "latest" ]]
     then
-        get_latest_tag
+        get_latest_tag "${REPOS}/nghttp2" "v"
     else
         [[ "${version}" =~ ^[0-9].* ]] ||
             err "ERROR: invalid version '${version}': should be something like 1.24.0" ||
@@ -99,8 +85,8 @@ install_nghttp2_main() {
             err "ERROR: ${REPOS}/nghttp2 exists but is not a directory" ||
             return 1
         cd nghttp2 || return
-        git checkout --quiet master || return
-        git pull --quiet --rebase --autostash --tags >/dev/null || return
+        command git checkout --quiet master || return
+        command git pull --quiet --rebase --autostash --tags >/dev/null || return
     fi
 
     local version_tag
