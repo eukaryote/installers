@@ -55,7 +55,7 @@ main() {
     local -r cflags="-fPIC -fstack-protector-strong --param=ssp-buffer-size=4 -Wp,-D_FORTIFY_SOURCE=2 -Wstrict-prototypes -Wformat -Wformat-security -mtune=generic"
     local -r ldflags="-Wl,-z,relro,-z,now,-rpath='${GPG_VERSION_DIR}/lib'"
 
-    cd "${workdir}"
+    cd "${workdir}" || return
     fetchdeps "${workdir}" || return 1
 
 
