@@ -215,7 +215,8 @@ major_version() {
 src_dir() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r version=${2:?version parameter is required}
-    local -r _dir="${build_dir}/$(basename "$(package "${version}")" ".${EXT}")" ||
+    local _dir
+    _dir="${build_dir}/$(basename "$(package "${version}")" ".${EXT}")" ||
         return
     echo -n "${_dir}"
 }
@@ -235,7 +236,8 @@ download_package_and_signature() {
 
     verify_dir "${build_dir}" || return
 
-    local -r packageurl=$(url "${version}") || return
+    local packageurl
+    packageurl=$(url "${version}") || return
 
     echo -n " - downloading"
     download_and_verify "${packageurl}" "${packageurl}.asc" "${build_dir}"
@@ -249,7 +251,8 @@ configure() {
     local -r version=${2:?version parameter is required}
     local -r destdir=${3:?destdir parameter is required}
 
-    local -r packagedir=$(src_dir "${build_dir}" "${version}") || return
+    local packagedir
+    packagedir=$(src_dir "${build_dir}" "${version}") || return
 
     echo -n " - configuring"
     change_dir "${packagedir}" || return
@@ -350,7 +353,8 @@ compile() {
     local -r build_dir=${1:?build_dir parameter is required}
     local -r version=${2:?version parameter is required}
     local -r destdir=${3:?destdir parameter is required}
-    local -r mversion=$(major_version "${version}") || return
+    local mversion
+    mversion=$(major_version "${version}") || return
 
     # verify no spaces in the vars we use that could affect splitting
     [[ ${destdir} != *" "* ]] || {
@@ -409,7 +413,9 @@ run_tests() {
     local -r version=${2:?version parameter is required}
 
     change_dir "$(src_dir "${build_dir}" "${version}")" || return
-    local -r libdir="$(command ls -d -1 build/lib*)" || return
+    local libdir
+    libdir="$(command ls -d -1 build/lib*)" || return
+
     local -r testclass=$(if [[ "${version:0:1}" = "2" ]]; then echo -n test.regrtest; else echo -n test; fi)
     run_clean LD_LIBRARY_PATH="${libdir}" ./python -m "${testclass}" > "${build_dir}"/test.log 2>&1 || {
         local -r rc=$?
@@ -443,7 +449,8 @@ install_pip() {
     local -r installdir=${2:?installdir parameter is required}
     local -r version=${3:?version parameter is required}
 
-    local -r mversion=$(major_version "${version}") || return
+    local mversion
+    mversion=$(major_version "${version}") || return
     local -r bindir="${installdir}/bin"
     local -r pip_bin="${bindir}/pip${mversion}"
 
@@ -478,7 +485,8 @@ install_ipython() {
         err "installdir does not exist: ${installdir}" ||
         return
 
-    local -r mversion=$(major_version "${version}") ||
+    local mversion
+    mversion=$(major_version "${version}") ||
         err "invalid version: ${version}" ||
         return
 
@@ -533,8 +541,11 @@ install_python_main() {
 
     echo " - install dir: ${installdir}"
 
-    local -r mversion=$(major_version "${version}") || return
-    local -r parentdir=$(cd "$(dirname "${installdir}")" && pwd -P)
+    local mversion
+    mversion=$(major_version "${version}") || return
+
+    local parentdir
+    parentdir=$(cd "$(dirname "${installdir}")" && pwd -P)
 
     if [[ ! -d "${installdir}" ]]
     then
@@ -552,7 +563,8 @@ install_python_main() {
     # the directory, but only change umask this once to keep
     # the temp directory private (but not the contents after they're
     # moved elsewhere outside that directory).
-    local -r build_dir="$(umask 077 && mktemp -d -t install-python-"$(tr . - <<< "${version}")"-XXXXXX)" || {
+    local build_dir
+    build_dir="$(umask 077 && mktemp -d -t install-python-"$(tr . - <<< "${version}")"-XXXXXX)" || {
         local -r rc=$?
         echo "error ${rc} creating build_dir using mktemp -d"
         echo "Check \$TMPDIR and verify that it is set to a suitable directory"

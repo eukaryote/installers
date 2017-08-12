@@ -24,7 +24,8 @@ fetchdeps() {
 
     for dep in "${deps[@]}"
     do
-        local name="$(basename ${dep})"
+        local name
+        name="$(basename ${dep})"
         curl -q -L -o "${name}" "${dep}" || {
             local rc=$?
             &>2 echo "couldn't download tarball: ${dep}"
@@ -49,7 +50,8 @@ fetchdeps() {
 }
 
 main() {
-    local -r workdir="$(mktemp -d)"
+    local workdir
+    workdir="$(mktemp -d)"
     local -r cflags="-fPIC -fstack-protector-strong --param=ssp-buffer-size=4 -Wp,-D_FORTIFY_SOURCE=2 -Wstrict-prototypes -Wformat -Wformat-security -mtune=generic"
     local -r ldflags="-Wl,-z,relro,-z,now,-rpath='${GPG_VERSION_DIR}/lib'"
 

@@ -97,7 +97,8 @@ unpack() {
         err "invalid path to package: ${tarpath}" ||
         return
 
-    local -r parentdir=$(dirname "${tarpath}") || return
+    local parentdir
+    parentdir=$(dirname "${tarpath}") || return
 
     echo -n " - unpacking"
     change_dir "${parentdir}" || return
