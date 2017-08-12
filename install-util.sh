@@ -187,17 +187,46 @@ has_configure_opt() {
     ./configure --help=short | command grep -- "${opt}" >/dev/null 2>&1
 }
 
+# Evaluate to non-zero if there is a broken symlink at path provided
+# by the first param, which is required.
+is_broken_symlink() {
+    local filepath=${1:?filepath parameter is required}
+    [[ -L "${filepath}" ]] && [[ ! -a "${filepath}" ]]
+}
+
 # Add a 'default' symlink to the directory named $2 inside the basedir $1
 # if there is not already a 'default' file in that directory.
 add_default_symlink() {
     local basedir=${1:?basedir parameter is required}
     local version=${2:?version parameter is required}
 
-    if [[ ! -e "${basedir}/default" ]]
+    local -r dest="${basedir}/default"
+
+    # If 'default' exists and is a symlink, update it iff NO_UPDATE var not set
+    if [[ -L "${dest}" ]]
     then
-        ln -sn "${version}" "${basedir}/default" || return
+        if [[ "${DEFAULT_SYMLINK_NO_UPDATE:0}" != "1" ]]
+        then
+            ln -sfn "${version}" "${basedir}/default"
+        fi
+        return
     fi
-    return 0
+
+    # If 'default' exists and is not a symlink, update it if NO_UPDATE not set
+    if [[ -e "${dest}" ]]
+    then
+        if [[ "${DEFAULT_SYMLINK_NO_UPDATE:0}" != "1" ]]
+        then
+            ln -sfn "${version}" "${basedir}/default"
+        fi
+        return
+    fi
+
+    # If 'default' doesn't exist at all, create it unless NO_CREATE not set
+    if [[ "${DEFAULT_SYMLINK_NO_CREATE:0}" != "1" ]]
+    then
+        ln -sfn "${version}" "${basedir}/default"
+    fi
 }
 
 # Check that gpg2 is installed.
