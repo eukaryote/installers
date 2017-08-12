@@ -62,8 +62,8 @@ run_clean() {
     local -r language="${LANGUAGE:-en_US}"
     local -r lang="${LANG:-${language}.UTF-8}"
 
-    echo env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
-    env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
+    echo command env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
+    command env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
 }
 
 # Check success of stage just completed, and on failure, show log
