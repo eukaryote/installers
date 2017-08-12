@@ -66,6 +66,40 @@ run_clean() {
     command env -i PATH=/usr/bin:/bin LANGUAGE="${language}" LANG="${lang}" "$@"
 }
 
+# Get the path to the preferred python executable.
+#
+# This returns the first found path of "${PYTHON_BASE}/default/bin/python3" or
+# "${PYTHON_BASE}/default/bin/python", and if neither is present, uses the
+# first of $(which python3) and $(which python) that is found.
+get_python() {
+    local exe
+
+    for binary in python3 python
+    do
+        exe="${PYBASE:-/opt/python}/default/bin/${binary}"
+        [[ -e "${exe}" ]] && {
+            if "${exe}" -V >/dev/null 2>&1
+            then
+                echo -n "${exe}"
+                return 0
+            fi
+        }
+    done
+
+    for binary in python3 python
+    do
+        exe=$(which ${binary} 2>/dev/null) && {
+            if "${exe}" -V >/dev/null 2>&1
+            then
+                echo -n "${exe}"
+                return 0
+            fi
+        }
+    done
+
+    return 1
+}
+
 # Check success of stage just completed, and on failure, show log
 # info and return with the original status.
 # The first param should be a stage (configure, compile, install, or
