@@ -39,6 +39,10 @@ install_curl_main() {
 
     command mkdir -p "${install_dir}" || return
 
+    run_clean ./buildconf ||
+        err "ERROR: buildconf failed" ||
+        return
+
     run_clean ./configure --prefix="${install_dir}" --with-nghttp2="${nghttp2_dir}" --with-ssl --disable-shared ||
         err "ERROR: configure failed" ||
         return
