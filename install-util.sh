@@ -100,6 +100,43 @@ get_python() {
     return 1
 }
 
+
+# Get the lib/pythonX.X for the Python executable given as path.
+get_python_lib_dir() {
+    local -r exe="${1:?path to a python executable is required}"
+    local -r pyconfig="${exe}-config"
+
+    if [[ ! -x "${exe}" ]]
+    then
+        err "'${exe}' is not a Python executable"
+        return 1
+    fi
+
+    local prefix
+    prefix=$("${pyconfig}" --prefix) ||
+        err "ERROR: '${pyconfig} --prefix' failed" ||
+        return 1
+
+    local major_dot_minor
+    major_dot_minor=$("${exe}" --version 2>&1 | \
+        command tail -n 1 | \
+        command grep -E -o '(\.|[[:digit:]])+' | \
+        command tr -d '\s' | \
+        command grep -E -o '[[:digit:]]+\.[[:digit:]]+' \
+    ) || {
+        err "ERROR: couldn't determine Python lib dir"
+        return 1
+    }
+    local -r libdir="${prefix}/lib/python${major_dot_minor}"
+
+    if [[ ! -d "${libdir}" ]]
+    then
+        err "ERROR: expected Python lib dir '${libdir}' not found"
+        return 1
+    fi
+    echo -n "${libdir}"
+}
+
 # Check success of stage just completed, and on failure, show log
 # info and return with the original status.
 # The first param should be a stage (configure, compile, install, or
