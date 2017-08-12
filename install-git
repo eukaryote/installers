@@ -16,23 +16,53 @@ fi
 REPOS="${REPOS:-$HOME/repos}"
 GIT_BASE="${GIT_BASE:-/opt/git}"
 
+
+# Compile and install Git to "${GIT_BASE:-/opt/git}/${version}" using require
+# param to determine version (may be a numeric version string such as '2.13.5'
+# or 'latest', which will be resolved to the latest version based on the tags
+# in the repo).
 install_git_main() {
-    local -r version="${1:?version param is required}"
+    local version="${1:?version param is required}"
 
-    cd "${REPOS}/git" ||
-        err "Git repo not found at expected location: ${REPOS}/git" ||
+    if [[ ! -d "${REPOS}/git" ]]
+    then
+        cd "${REPOS}" || return
+        command git clone --quiet https://github.com/git/git.git git || return
+        cd git || return
+    else
+        cd "${REPOS}/git"
+        command git checkout --quiet master || return
+        command git pull --quiet --rebase --autostash --tags || return
+    fi
+
+    local version_tag
+    if [[ "${version}" = "latest" ]]
+    then
+        version_tag=$(get_latest_tag .) || return
+        version="${version_tag:1}"
+        echo "Using latest version: ${version}"
+    else
+        version_tag="v${version}"
+    fi
+
+    command git checkout --quiet "${version_tag}" ||
+        err "failed to checkout git version ${version} using tag ${version_tag}" ||
         return
 
-    git checkout "v${version}" ||
-        err "failed ($?) to checkout git version v${version}" ||
-        return
+    local -r install_dir="${GIT_BASE}/${version}"
+
+    if [[ -f "${install_dir}/bin/git" ]]
+    then
+        err "Git version ${version} already exists: ${install_dir}"
+        return 1
+    fi
+    mkdir -p "${install_dir}" || return
 
     local make_command=()
-    local -r ccache="$(which ccache 2>/dev/null)"
+    local ccache="$(which ccache 2>/dev/null)"
     [[ -s "${ccache}" ]] && make_command+=(ccache)
     make_command+=(make)
 
-    local -r install_dir="${GIT_BASE}/${version}"
     run_clean "${make_command[@]}" CURLDIR="${REPOS}/curl" prefix="${install_dir}" all doc info || return
     run_clean make prefix="${install_dir}" install install-doc install-html install-info || return
     add_default_symlink "${GIT_BASE}" "${version}"
@@ -41,5 +71,10 @@ install_git_main() {
 # run only if not sourced, so this script can be sourced for interactive use
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
-    install_git_main "$@"
+    if [[ -n "$*" ]]
+    then
+        install_git_main "$@"
+    else
+        install_git_main latest
+    fi
 fi
