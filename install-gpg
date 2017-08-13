@@ -2,127 +2,260 @@
 
 set -uo pipefail
 
-GPG_BASE="${GPG_BASE:-/opt/gpg}"
-GPG_VERSION="${GPG_VERSION:-2.1.21}"
-GPG_VERSION_DIR="${GPG_VERSION_DIR:-/opt/gpg/${GPG_VERSION}}"
+# Need to get the installers dir to access the fig2dev patch file, even if this
+# 'install-gpg' script is just a symlink some place like ~/bin/install-gpg
+# [we avoid using readlink options for max compability with alpine, etc.].
+INSTALLERS_DIR=$(cd $(dirname "${BASH_SOURCE[0]:-$0}") && cd $(dirname $(readlink "${BASH_SOURCE[0]:-$0}" || echo -n '.')) && pwd -P)
+# echo "INSTALLERS_DIR: ${INSTALLERS_DIR}"
 
-# latest versions of deps as of 2017-07-23:
+# Source utils if running as a script (not source ourselves). This is
+# at the top so that variables and functions defined in this module override
+# any defined in the util script that have the same name.
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    source "${INSTALLERS_DIR}/install-util.sh" || {
+        >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
+        exit 1
+    }
+fi
+
+REPOS="${REPOS:-$HOME/repos}"
+GPG_BASE="${GPG_BASE:-/opt/gpg}"
+GPG_ORIGIN="https://github.com/gpg/gnupg.git"
+
+# latest versions of deps as of 2017-08-13:
+PKG_PINENTRY="https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-1.0.0.tar.bz2"
+PKG_LIBASSUAN="https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-2.4.3.tar.bz2"
+PKG_NPTH="https://www.gnupg.org/ftp/gcrypt/npth/npth-1.5.tar.bz2"
+PKG_LIBGCRYPT="https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.0.tar.bz2"
+PKG_LIBKSBA="https://www.gnupg.org/ftp/gcrypt/libksba/libksba-1.3.5.tar.bz2"
+PKG_LIBGPGERROR="https://www.gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.27.tar.bz2"
+
 deps=(
-    https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-1.0.0.tar.bz2
-    https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-2.4.3.tar.bz2
-    https://www.gnupg.org/ftp/gcrypt/npth/npth-1.5.tar.bz2
-    https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.0.tar.bz2
-    https://www.gnupg.org/ftp/gcrypt/libksba/libksba-1.3.5.tar.bz2
-    https://www.gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.27.tar.bz2
-    https://www.gnupg.org/ftp/gcrypt/gnupg/gnupg-${GPG_VERSION}.tar.bz2
+    "${PKG_PINENTRY}"
+    "${PKG_LIBASSUAN}"
+    "${PKG_NPTH}"
+    "${PKG_LIBGCRYPT}"
+    "${PKG_LIBKSBA}"
+    "${PKG_LIBGPGERROR}"
 )
 
 
 fetchdeps() {
-    local -r basedir="${1?basedir required}"
-    cd "${basedir}" || return 1
+    local -r downloaddir="${1:?downloaddir required}"
+    local -r workdir="${2:?workdir required}"
 
+    verify_private_dir "${downloaddir}" || return
+    verify_private_dir "${workdir}" || return
+
+    local dep pkgpath
     for dep in "${deps[@]}"
     do
+        local pkgname
+        pkgname=$(basename "${dep}") || return
+
         local name
-        name="$(basename ${dep})"
-        curl -q -L -o "${name}" "${dep}" || {
-            local rc=$?
-            &>2 echo "couldn't download tarball: ${dep}"
-            return $rc
-        }
-        curl -q -L -o "${name}.sig" "${dep}.sig" || {
-            local rc=$?
-            >&2 echo "couldn't download tarball signature: ${dep}.sig"
-            return $rc
-        }
-        gpg -q --verify "${name}.sig" "${name}" >/dev/null 2>&1 || {
-            local rc=$?
-            >&2 echo "couldn't verify: ${name}.sig ${name}"
-            return $rc
-        }
-        tar xf "${name}" || {
-            local rc=$?
-            >&2 echo "couldn't extract tarball: ${name}"
-            return $rc
-        }
+        name=$(basename "${pkgname}" .tar.bz2) || return
+
+        pkgpath="${downloaddir}/${pkgname}"
+
+        if [[ ! -f "${pkgpath}" ]]
+        then
+            download "${downloaddir}" "${dep}" || return
+        fi
+
+        if [[ ! -f "${pkgpath}.sig" ]]
+        then
+            download "${downloaddir}" "${dep}.sig" || return
+        fi
+
+        gpg_verify "${downloaddir}/${pkgname}.sig" "${downloaddir}/${pkgname}" || return
+
+        if [[ -n "${workdir}" && -n "${name}" && -d "${workdir}/${name}" ]]
+        then
+            command rm -rf "${workdir}/${name}"
+        fi
+
+        mkdir -m 0700 "${workdir}/${name}" || return
+
+        unpack "${pkgpath}" "${workdir}" || return
+        # command tar -C "${workdir}/${name}" --strip-components 1 -xf "${pkgpath}" ||
+        #     err "couldn't extract tarball: ${pkgname}" ||
+        #     return
     done
 }
 
-main() {
+install_gpg_main() {
+    local gpg_version="${1:?gpg_version param is required}"
+
+    local -r gpg_dir="${REPOS}/gpg"
+
+    mkdir -p "${REPOS}" || return
+    cd "${REPOS}" || return
+
+    if [[ ! -d "${gpg_dir}" ]]
+    then
+        command git clone --quiet "${GPG_ORIGIN}" gpg || return
+        cd gpg || return
+    else
+        cd gpg || return
+        command git checkout --quiet --force master
+        command git pull --quiet --rebase --autostash --tags >/dev/null || return
+    fi
+
+    local gpg_tag
+
+    if [[ "${gpg_version}" = "latest" ]]
+    then
+        gpg_tag=$(get_latest_tag "${REPOS}"/gpg "gnupg") ||
+            err "ERROR: couldn't determine latest GPG version"||
+            return
+        gpg_version=$(echo -n "${gpg_tag}" | command grep -E -o '[0-9][-0-9\._]+')
+        echo "Using latest GPG version: ${gpg_version}"
+    else
+        gpg_tag="gpg-${gpg_version}"
+    fi
+
+    local -r install_dir="${GPG_BASE}/${gpg_version}"
+
+    if [[ -f "${install_dir}/bin/gpg" || -f "${install_dir}/bin/gpg2" ]]
+    then
+        err "GPG version ${version} already exists: ${install_dir}"
+        return 1
+    fi
+
+    command git checkout --quiet "${gpg_tag}" ||
+        err "failed to checkout GPG version ${gpg_version} using tag ${gpg_tag}" ||
+        return
+
+    command mkdir -p "${install_dir}" || return
+
+    local downloaddir
+    downloaddir=$(make_download_dir gpg) || return
+
     local workdir
-    workdir="$(mktemp -d)"
+    workdir=$(mktemp -d) || return
+    # trap "rm -rf '${workdir}'" 0
+
     local -r cflags="-fPIC -fstack-protector-strong --param=ssp-buffer-size=4 -Wp,-D_FORTIFY_SOURCE=2 -Wstrict-prototypes -Wformat -Wformat-security -mtune=generic"
-    local -r ldflags="-Wl,-z,relro,-z,now,-rpath='${GPG_VERSION_DIR}/lib'"
+    local -r ldflags="-Wl,-z,relro,-z,now,-rpath='${install_dir}/lib'"
 
     cd "${workdir}" || return
-    fetchdeps "${workdir}" || return 1
+    fetchdeps "${downloaddir}" "${workdir}" || return 1
 
-
-    cd npth* || return 1
-    ./configure --prefix="${GPG_VERSION_DIR}" LDFLAGS="${ldflags}" || return 1
+    cd "${workdir}/$(basename_from_package ${PKG_NPTH})" || return 1
+    ./configure --prefix="${install_dir}" LDFLAGS="${ldflags}" || return 1
     make CFLAGS="${cflags}" || return 1
     make install || return 1
-    cd .. || return 1
 
-    cd libgpg-error* || return 1
+    cd "${workdir}/$(basename_from_package ${PKG_LIBGPGERROR})" || return 1
     ./configure \
-        --prefix="${GPG_VERSION_DIR}" \
+        --prefix="${install_dir}" \
         LDFLAGS="${ldflags}" || return 1
     make CFLAGS="${cflags}" || return 1
     make install || return 1
-    cd ..
 
-    cd libassuan* || return 1
+    cd "${workdir}/$(basename_from_package ${PKG_LIBASSUAN})" || return 1
     ./configure \
-        --prefix="${GPG_VERSION_DIR}" \
-        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        --prefix="${install_dir}" \
+        --with-libgpg-error-prefix="${install_dir}" \
         LDFLAGS="${ldflags}" || return 1
     make CFLAGS="${cflags}" || return 1
     make install || return 1
-    cd ..
 
-    cd pinentry* || return 1
+    cd "${workdir}/$(basename_from_package ${PKG_PINENTRY})" || return 1
     ./configure \
-        --prefix="${GPG_VERSION_DIR}" \
-        --with-libassuan-prefix="${GPG_VERSION_DIR}" \
-        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        --prefix="${install_dir}" \
+        --with-libassuan-prefix="${install_dir}" \
+        --with-libgpg-error-prefix="${install_dir}" \
         LDFLAGS="${ldflags}" || return 1
     make CFLAGS="${cflags}" || return 1
     make install || return 1
-    cd ..
 
-    cd libksba* || return 1
+    cd "${workdir}/$(basename_from_package ${PKG_LIBKSBA})" || return 1
     ./configure \
-        --prefix="${GPG_VERSION_DIR}" \
-        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        --prefix="${install_dir}" \
+        --with-libgpg-error-prefix="${install_dir}" \
         LDFLAGS="${ldflags}" || return 1
     make CFLAGS="${cflags}" || return 1
     make install || return 1
-    cd ..
 
-    cd libgcrypt* || return 1
+    cd "${workdir}/$(basename_from_package ${PKG_LIBGCRYPT})" || return 1
     ./configure \
-        --prefix="${GPG_VERSION_DIR}" \
-        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
+        --prefix="${install_dir}" \
+        --with-libgpg-error-prefix="${install_dir}" \
         LDFLAGS="${ldflags}" || return 1
     make CFLAGS="${cflags}" || return 1
     make install || return 1
-    cd ..
 
-    cd gnupg* || return 1
+    cd "${REPOS}/gpg" || return 1
+
+    # Patch to avoid fig2dev errors for docs if fig2dev not installed
+    local -r patchfile="${INSTALLERS_DIR}/gpg-fig2dev-doc.patch"
+    [[ -f "${patchfile}" ]] ||
+        err "ERROR: couldn't find expected patch file at '${patchfile}'" ||
+        return 1
+    # Only apply if not applied yet:
+    if ! command patch -f -R -p1 --dry-run < "${patchfile}" >/dev/null 2>&1
+    then
+        command patch -p1 -N < "${patchfile}" || return 1
+    fi
+
+    if [[ -f "config.log" ]]
+    then
+        make distclean || return 1
+        ./autogen.sh || return 1
+    else
+        make distclean >/dev/null 2>&1 # try, but ignore fail
+        ./autogen.sh --force || return 1
+    fi
+
     ./configure \
-        --prefix="${GPG_VERSION_DIR}" \
-        --with-libgpg-error-prefix="${GPG_VERSION_DIR}" \
-        --with-libgcrypt-prefix="${GPG_VERSION_DIR}" \
-        --with-libassuan-prefix="${GPG_VERSION_DIR}" \
-        --with-ksba-prefix="${GPG_VERSION_DIR}" \
-        --with-npth-prefix="${GPG_VERSION_DIR}" \
-        --with-ntbtls-prefix="${GPG_VERSION_DIR}" \
-        LDFLAGS="${ldflags}" || return 1
-    make CFLAGS="${cflags}" || return 1
-    make install || return 1
-    cd ..
+        --prefix="${install_dir}" \
+        --with-libgpg-error-prefix="${install_dir}" \
+        --with-libgcrypt-prefix="${install_dir}" \
+        --with-libassuan-prefix="${install_dir}" \
+        --with-ksba-prefix="${install_dir}" \
+        --with-npth-prefix="${install_dir}" \
+        --with-ntbtls-prefix="${install_dir}" \
+        LDFLAGS="${ldflags}" || {
+            err "ERROR: GPG configuration failed"
+            return
+    }
+    make CFLAGS="${cflags}" ||
+        err "ERROR: GPG compilation failed" ||
+        return
+
+    make install ||
+        err "ERROR: GPG instalation failed" ||
+        return
+
+    # 2.1.23 and later will install as 'gpg', but earlier versions install
+    # as 'gpg2', so we ensure that both exist regardless of the version
+    # for consistency, making one the symlink to the other if necessary.
+    if [[ -e "${install_dir}/bin/gpg" ]]
+    then
+        if [[ ! -e "${install_dir}/bin/gpg2" ]]
+        then
+            ln -sf gpg "${install_dir}/bin/gpg2"
+        fi
+    else
+        if [[ -e "${install_dir}/bin/gpg2" ]]
+            then
+            ln -sf gpg2 "${install_dir}/bin/gpg"
+        fi
+    fi
+
+    add_default_symlink "${GPG_BASE}" "${gpg_version}"
 }
 
-main
+# run only if not sourced, so this script can be sourced for interactive use
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    if [[ -n "$*" ]]
+    then
+        install_gpg_main "$@"
+    else
+        install_gpg_main latest
+    fi
+fi
