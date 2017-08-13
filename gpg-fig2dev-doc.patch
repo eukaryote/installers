@@ -1,0 +1,39 @@
+diff --git a/configure.ac b/configure.ac
+index 3ff58655c..9fd3bca5d 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -935,6 +935,9 @@ AC_PATH_PROG(SHRED, shred, /usr/bin/shred)
+ AC_DEFINE_UNQUOTED(SHRED,
+ 	"${SHRED}", [defines the filename of the shred program])
+ 
++# Find fig2dev
++#
++AC_PATH_PROG([FIG2DEV], [fig2dev], [false])
+ 
+ #
+ # Check whether the nPth library is available
+diff --git a/doc/Makefile.am b/doc/Makefile.am
+index 89079b383..174feb427 100644
+--- a/doc/Makefile.am
++++ b/doc/Makefile.am
+@@ -129,16 +129,16 @@ mkdefsinc: mkdefsinc.c Makefile ../config.h
+ 	convert `test -f '$<' || echo '$(srcdir)/'`$< $@
+ 
+ .fig.png:
+-	fig2dev -L png `test -f '$<' || echo '$(srcdir)/'`$< $@
++	$(FIG2DEV) -L png `test -f '$<' || echo '$(srcdir)/'`$< $@ || touch $@
+ 
+ .fig.jpg:
+-	fig2dev -L jpeg `test -f '$<' || echo '$(srcdir)/'`$< $@
++	$(FIG2DEV) -L jpeg `test -f '$<' || echo '$(srcdir)/'`$< $@ || touch $@
+ 
+ .fig.eps:
+-	fig2dev -L eps `test -f '$<' || echo '$(srcdir)/'`$< $@
++	$(FIG2DEV) -L eps `test -f '$<' || echo '$(srcdir)/'`$< $@ || touch $@
+ 
+ .fig.pdf:
+-	fig2dev -L pdf `test -f '$<' || echo '$(srcdir)/'`$< $@
++	$(FIG2DEV) -L pdf `test -f '$<' || echo '$(srcdir)/'`$< $@ || touch $@
+ 
+ 
+ yat2m-stamp: $(myman_sources) defs.inc
