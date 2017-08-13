@@ -157,6 +157,19 @@ stage_complete() {
     return "${complete_status}"
 }
 
+# Extract the basename from a package path (e.g., 'myfile' for
+# 'myfile.tar.gz' or '/a/myfile.tbz2').
+basename_from_package() {
+    local -r packagepath=${1:?packagepath is required}
+    [[ -z "${2:-}" ]] || {
+        err "usage: basename_from_package PKGPATH"
+        return 1
+    }
+
+    local name=$(basename "${packagepath}") || return
+    sed -r -e 's/\.tar$//g' -e 's/\.(tar\.|t)(gz|bz2|xz)$//g' <<<"${name}"
+}
+
 
 # Unpack the downloaded source package in the same directory that contains
 # the tarball and which should be given as the first param
