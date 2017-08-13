@@ -245,7 +245,7 @@ add_default_symlink() {
     # If 'default' exists and is a symlink, update it iff NO_UPDATE var not set
     if [[ -L "${dest}" ]]
     then
-        if [[ "${DEFAULT_SYMLINK_NO_UPDATE:0}" != "1" ]]
+        if [[ "${DEFAULT_SYMLINK_NO_UPDATE:-0}" != "1" ]]
         then
             ln -sfn "${version}" "${basedir}/default"
         fi
@@ -255,7 +255,7 @@ add_default_symlink() {
     # If 'default' exists and is not a symlink, update it if NO_UPDATE not set
     if [[ -e "${dest}" ]]
     then
-        if [[ "${DEFAULT_SYMLINK_NO_UPDATE:0}" != "1" ]]
+        if [[ "${DEFAULT_SYMLINK_NO_UPDATE:-0}" != "1" ]]
         then
             ln -sfn "${version}" "${basedir}/default"
         fi
@@ -263,7 +263,7 @@ add_default_symlink() {
     fi
 
     # If 'default' doesn't exist at all, create it unless NO_CREATE not set
-    if [[ "${DEFAULT_SYMLINK_NO_CREATE:0}" != "1" ]]
+    if [[ "${DEFAULT_SYMLINK_NO_CREATE:-0}" != "1" ]]
     then
         ln -sfn "${version}" "${basedir}/default"
     fi
