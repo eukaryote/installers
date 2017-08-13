@@ -381,3 +381,23 @@ verify_private_dir() {
 
     return 0
 }
+
+# Verify (detached) GPG signature file ($1) for file ($2).
+gpg_verify() {
+    local -r sigpath=${1:?sigpath is required}
+    local -r filepath=${2:?filepath is required}
+
+    [[ -f "${sigpath}" ]] ||
+        err "ERROR: signature file '${sigpath}' does not exist or is not a regular file" ||
+        return 1
+
+    [[ -f "${filepath}" ]] ||
+        err "ERROR: file '${sigpath}' does not exist or is not a regular file" ||
+        return 1
+
+    command gpg -q --verify "${sigpath}" "${filepath}" >/dev/null 2>&1 || {
+        err "ERROR: gpg verification failed [gpg --verify '${sigpath}' '${filepath}']"
+        err "Import the relevant public key, if necessary, and run the command manually to view the error messages"
+        return 1
+    }
+}
