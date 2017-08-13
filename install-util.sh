@@ -186,18 +186,36 @@ basename_from_url() {
 # The tar packaged
 unpack() {
     local -r tarpath=${1:?tarpath parameter is required}
+    local targetdir=${2:-}
+
     [[ -f "${tarpath}" ]] ||
         err "invalid path to package: ${tarpath}" ||
         return
 
-    local parentdir
-    parentdir=$(dirname "${tarpath}") || return
+    if [[ -z "${targetdir}" ]]
+    then
+        targetdir=$(cd $(dirname "${tarpath}") && pwd) || return
+    else
+        verify_private_dir "${targetdir}" || return
+    fi
 
-    echo -n " - unpacking"
-    change_dir "${parentdir}" || return
+    local pkg
+    pkg=$(basename "${tarpath}") || return
 
-    local unpack_status
-    tar xf "${tarpath}" ||
+    local name
+    name=$(basename_from_package "${tarpath}") || return
+
+    local -r destdir="${targetdir}/${name}"
+
+    if [[ -n "${targetdir}" && -n "${name}" && -d "${destdir}" ]]
+        then
+        command rm -rf "${destdir}"
+    fi
+
+    mkdir -p -m 0700 "$(dirname "${destdir}")" || return
+    mkdir -m 0700 "${destdir}" || return
+
+    tar -C "${destdir}" --strip-components 1 -xf "${tarpath}" ||
         err " - failed with status ${unpack_status} to unpack package: ${tarpath}" ||
         return
 }
@@ -277,15 +295,14 @@ download() {
     change_dir "${download_dir}" || return
 
     shift
+
+    local filename
     for url in "$@"
     do
-        command curl --fail --fail-early -L -s -O "${url}" || {
-            local -r rc=$?
-            true
-            err " - curl failed to download file [status ${rc}]:"
-            err "   - ${url}"
-            return $rc
-        }
+        filename=$(basename_from_url "${url}") || return
+        command curl -s -S -L -o "${download_dir}/${filename}" "${url}" ||
+            err " - curl failed to download file from ${url}" ||
+            return
     done
     return 0
 }
