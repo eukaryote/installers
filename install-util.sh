@@ -337,3 +337,28 @@ get_latest_tag() {
 
     echo -n "${tag}"
 }
+
+# Verify each directory given as a param exists and has 0700 perms and is
+# owned by the current user. At least 1 directory is required.
+verify_private_dir() {
+    if [[ -z "$*" ]]
+    then
+        err "ERROR: verify_private_dir requires at least one directory path to check"
+        return 1
+    fi
+
+    local me
+    me=$(whoami) || return
+
+    local dirpath
+    for dirpath in "$@"
+    do
+        if ! command ls -ld "${dirpath}" | command grep -E "^drwx------ [0-9]+ ${me} " > /dev/null 2>&1
+        then
+            err "directory '${dirpath}' should have perms 0700 and be owned by user '${me}'"
+            return 1
+        fi
+    done
+
+    return 0
+}
