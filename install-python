@@ -227,7 +227,7 @@ url() {
     eval "echo \"${URL}\""
 }
 
-# Download Python source package and signature using cUrl.
+# Download Python source package and signature.
 # The first param should be the directory to download into, which must
 # already exist, and the second param should be the version (e.g., 3.6.1).
 download_package_and_signature() {
@@ -460,8 +460,7 @@ install_pip() {
     if [[ ! -f "${pip_bin}" ]]
     then
         change_dir "${build_dir}" || return
-        curl --fail --fail-early -s -LO 'https://bootstrap.pypa.io/get-pip.py' ||
-            err " - failed to download get-pip.py [status $?]" ||
+        download "${build_dir}" 'https://bootstrap.pypa.io/get-pip.py' ||
             return
         "${bindir}/python${mversion}" get-pip.py > "${build_dir}"/install_pip.log 2>&1
     else
@@ -604,7 +603,6 @@ install_python_main() {
             cleanup=0
             return $rc
         }
-        echo
         unpack "${build_dir}"/"$(package "${version}")" || {
             local -r rc=$?
             cleanup=0
