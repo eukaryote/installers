@@ -338,6 +338,25 @@ get_latest_tag() {
     echo -n "${tag}"
 }
 
+# Create a download directory for the current host, if it doesn't already
+# exist, and echo the full path to the directory.
+make_download_dir() {
+    local package_name="${1:?package_name is required}"
+
+    local -r dirpath="${TMPDIR}/installers/${package_name}"
+
+    if [[ -e "${dirpath}" ]]
+    then
+        verify_private_dir "${dirpath}" || return
+
+        echo -n "${dirpath}"
+        return 0
+    fi
+
+    mkdir -p -m 700 "${dirpath}" || return
+    echo -n "${dirpath}"
+}
+
 # Verify each directory given as a param exists and has 0700 perms and is
 # owned by the current user. At least 1 directory is required.
 verify_private_dir() {
