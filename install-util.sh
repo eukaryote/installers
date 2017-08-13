@@ -170,6 +170,15 @@ basename_from_package() {
     sed -r -e 's/\.tar$//g' -e 's/\.(tar\.|t)(gz|bz2|xz)$//g' <<<"${name}"
 }
 
+# Extract basename of URL (last path segment), ignoring query string if present.
+basename_from_url() {
+    local -r url="${1:?url is required}"
+    [[ -z "${2:-}" ]] || {
+        err "usage: basename_from_url PKGPATH"
+        return 1
+    }
+    basename "${url/%\?*/}"
+}
 
 # Unpack the downloaded source package in the same directory that contains
 # the tarball and which should be given as the first param
