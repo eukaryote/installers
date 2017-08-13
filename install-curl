@@ -31,7 +31,7 @@ install_curl_main() {
         cd curl || return
     else
         cd curl || return
-        command git checkout --quiet master
+        command git checkout --quiet --force master
         command git pull --quiet --rebase --autostash --tags >/dev/null || return
     fi
 
@@ -47,6 +47,10 @@ install_curl_main() {
     else
         curl_tag="curl-$(tr '.' '_' <<<"${curl_version}")"
     fi
+
+    command git checkout --quiet "${curl_tag}" ||
+        err "failed to checkout Curl version ${curl_version} using tag ${curl_tag}" ||
+        return
 
     local -r install_dir="${CURL_BASE}/${curl_version}"
     local -r nghttp2_dir="${NGHTTP2_BASE}/${nghttp2_version}"
