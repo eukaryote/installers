@@ -1,4 +1,7 @@
+# shellcheck shell=bash
+
 # Utility functions for use by Bash installer scripts.
+# This is only intended to be sourced by installation scripts.
 
 # Echo params to stderr and return with status of last command
 # executed before this function was invoked.
@@ -166,7 +169,8 @@ basename_from_package() {
         return 1
     }
 
-    local name=$(basename "${packagepath}") || return
+    local name
+    name=$(basename "${packagepath}") || return
     sed -r -e 's/\.tar$//g' -e 's/\.(tar\.|t)(gz|bz2|xz)$//g' <<<"${name}"
 }
 
@@ -194,13 +198,10 @@ unpack() {
 
     if [[ -z "${targetdir}" ]]
     then
-        targetdir=$(cd $(dirname "${tarpath}") && pwd) || return
+        targetdir=$(cd "$(dirname "${tarpath}")" && pwd) || return
     else
         verify_private_dir "${targetdir}" || return
     fi
-
-    local pkg
-    pkg=$(basename "${tarpath}") || return
 
     local name
     name=$(basename_from_package "${tarpath}") || return
@@ -212,12 +213,15 @@ unpack() {
         command rm -rf "${destdir}"
     fi
 
+    # shellcheck disable=SC2174
     mkdir -p -m 0700 "$(dirname "${destdir}")" || return
     mkdir -m 0700 "${destdir}" || return
 
-    tar -C "${destdir}" --strip-components 1 -xf "${tarpath}" ||
-        err " - failed with status ${unpack_status} to unpack package: ${tarpath}" ||
-        return
+    tar -C "${destdir}" --strip-components 1 -xf "${tarpath}" || {
+        local -r unpack_status=$?
+        err " - failed with status ${unpack_status} to unpack package: ${tarpath}"
+        return ${unpack_status}
+    }
 }
 
 # Return whether Python configure script in current working directory
@@ -328,7 +332,7 @@ download_and_verify() {
     fi
 
     download "${download_dir}" "${signature}" "${package}" || return
-    gpg_verify "$(basename "${signature}")" "$(basename ${package})" || return
+    gpg_verify "$(basename "${signature}")" "$(basename "${package}")" || return
 }
 
 # Get the latest tag for Git repo dir provided as param 1 by using
@@ -352,7 +356,38 @@ get_latest_tag() {
         err "ERROR: couldn't determine latest tag for repo: ${repo}" ||
         return 1
 
+    >&2 echo -n "Using latest tag: ${tag}"
+
     echo -n "${tag}"
+}
+
+# Resolve the version tag, which may be 'latest' or a number such as
+# '1.2.0', to the tag for that version, which will be something like
+# '1.2.0', using the optional suffix passed in as the second arg
+# (defaults to 'v') to verify that the tag exists
+git_checkout_tag() {
+    local repos="${1:?repos param is required}"
+    local name="${2:?name param is required}"
+    local version="${3:?version param is required}"
+    local tag_prefix="${4:-v}"
+
+    command cd "${repos}/${name}" || return
+
+    local result
+
+    if [[ "${version}" = "latest" ]]
+    then
+        result=$(get_latest_tag "${repos}/${name}" "${tag_prefix}")
+    else
+        [[ "${version}" =~ ^[0-9].* ]] ||
+            err "ERROR: invalid version '${version}': should be something like 0.2.0" ||
+            return 1
+        command git tag -l | grep -E "^${tag_prefix}${version}\$" >/dev/null 2>&1 ||
+            err "no tag found for version ${version}"
+            return 1
+        result="${tag_prefix}${version}"
+    fi
+    echo -n "${result}"
 }
 
 # Create a download directory for the current host, if it doesn't already
@@ -370,7 +405,8 @@ make_download_dir() {
         return 0
     fi
 
-    mkdir -p -m 700 "${dirpath}" || return
+    # shellcheck disable=2174
+    command mkdir -p -m 700 "${dirpath}" || return
     echo -n "${dirpath}"
 }
 
@@ -417,4 +453,50 @@ gpg_verify() {
         err "Import the relevant public key, if necessary, and run the command manually to view the error messages"
         return 1
     }
+}
+
+# Update a git repo in the REPOS dir, or clone it if it doesn't exist.
+git_update() {
+    local name="${1:?name of repo is required}"
+    local gitremote="${2:?gitremote URL of repo is required}"
+
+    [[ -n "${REPOS:-}" ]] ||
+        err "ERROR: env var REPOS is not defined" ||
+        return 1
+
+    mkdir -p "${REPOS}" || return
+
+    cd "${REPOS}" || return
+
+    if [[ ! -e "${name}" ]]
+    then
+        git clone --quiet "${gitremote}" "${name}" >/dev/null || return
+        cd "${name}" || return
+    else
+        [[ -d "${name}" ]] ||
+            err "ERROR: ${REPOS}/${name} exists but is not a directory" ||
+            return 1
+
+        cd "${name}" || return
+        command git checkout --quiet master || return
+        command git pull --quiet --rebase --autostash --tags || return
+    fi
+}
+
+# Create in $1 basedir provided a sub-directory with the $2 (name) provided.
+# The directory is created only if it doesn't exist, but the full path is
+# returned whether it exists already or is created. If it already exists,
+# an info message is echoed to stderr.
+make_install_dir() {
+    local -r basedir="${1:?basedir param is required}"
+    local -r name="${2:?name param is required}"
+    local -r install_dir="${basedir}/${name}"
+
+    if [[ -n "$(command ls -A "${install_dir}/*" 2> /dev/null)" ]]
+    then
+        >&2 echo "${INAME} version ${version} already exists: ${install_dir}"
+    else
+        command mkdir -p "${install_dir}" || return
+    fi
+    echo -n "${install_dir}"
 }
