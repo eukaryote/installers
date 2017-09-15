@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+REPOS="${REPOS:-$HOME/repos}"
+
+INAME="${INAME:-neovim}"
+IREPO="${IREPO:-https://github.com/neovim/neovim.git}"
+IBASE="${IBASE:-/opt/${INAME}}"
+
+# Source utils if running as a script (not source ourselves). This is
+# at the top so that variables and functions defined in this module override
+# any defined in the util script that have the same name.
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    # shellcheck source=install-util.sh
+    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
+        >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
+        exit 1
+    }
+fi
+
+# Fetch and install neovim version given by first param, which may be
+# a number like '0.2.0' or 'latest' (default is 'latest').
+install_main() {
+    local version="${1:-latest}"
+    local tag_prefix="v"
+    local version_tag
+
+    git_update "${INAME}" "${IREPO}" || return
+    version_tag=$(git_checkout_tag "${REPOS}" "${INAME}" "${version}" "${tag_prefix}") || return
+
+    if [[ "${version}" = "latest" ]]
+    then
+        version="${version_tag:${#tag_prefix}}"
+    fi
+
+    local install_dir
+    install_dir=$(make_install_dir "${IBASE}" "${version}") || return
+
+    cd "${REPOS}/${INAME}" || return
+
+    command git checkout --quiet "${version_tag}" ||
+        err "ERROR: error checking out git version tag ${version_tag}" ||
+        return
+
+    command rm -rf build/ || return
+    run_clean make CMAKE_EXTRA_FLAGS="-DCMAKE_INSTALL_PREFIX=${install_dir}" || return
+    run_clean make install || return
+
+    add_default_symlink "${IBASE}" "${version}"
+}
+
+# run only if not sourced, so this script can be sourced for interactive use
+if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
+then
+    if [[ -n "$*" ]]
+    then
+        install_main "$@"
+    else
+        install_main latest
+    fi
+fi
