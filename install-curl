@@ -7,6 +7,7 @@ set -o pipefail
 # any defined in the util script that have the same name.
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
+    # shellcheck source=install-util.sh
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
         >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
         exit 1
@@ -61,7 +62,7 @@ install_curl_main() {
 
     if [[ "${nghttp2_version}" = "default" ]]
     then
-        echo "Using existing nghttp version: $(${nghttp2_dir}/bin/nghttp --version | command grep -E -o '/.*$' | command tail -c '+2')"
+        echo "Using existing nghttp version: $("${nghttp2_dir}"/bin/nghttp --version | command grep -E -o '/.*$' | command tail -c '+2')"
     fi
 
     command mkdir -p "${install_dir}" || return
