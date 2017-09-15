@@ -42,6 +42,7 @@ NGHTTP2_PYTHON="${NGHTTP2_PYTHON:-}"
 # any defined in the util script that have the same name.
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
+    # shellcheck source=install-util.sh
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
         >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
         exit 1
@@ -134,16 +135,16 @@ install_nghttp2_main() {
         }
         run_clean ./configure \
             PYTHON="${NGHTTP2_PYTHON}" \
-            LDFLAGS="$(${NGHTTP2_PYTHON}-config --ldflags)" \
-            LIBS="$(${NGHTTP2_PYTHON}-config --libs)" \
-            CFLAGS="$(${NGHTTP2_PYTHON}-config --includes)" \
+            LDFLAGS="$("${NGHTTP2_PYTHON}"-config --ldflags)" \
+            LIBS="$("${NGHTTP2_PYTHON}"-config --libs)" \
+            CFLAGS="$("${NGHTTP2_PYTHON}"-config --includes)" \
             --prefix="${install_dir}" || return
         local pylibdir
         pylibdir=$(get_python_lib_dir "${NGHTTP2_PYTHON}") || return
         local pythonpath
         pythonpath="${install_dir}"/lib/"$(basename "${pylibdir}")"/site-packages || return
         mkdir -p "${pythonpath}" || return
-        install_args+=(PYTHONPATH="${pythonpath}")
+        install_args+=("PYTHONPATH=${pythonpath}")
     else
         run_clean ./configure \
             --disable-python-bindings \
