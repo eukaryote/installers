@@ -34,6 +34,7 @@
 # any defined in the util script that have the same name.
 if [[ "${BASH_SOURCE:-$_}" = "${0}" ]]
 then
+    # shellcheck source=install-util.sh
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-util.sh" || {
         >&2 echo "ERROR: couldn't source install-util.sh script from installers directory"
         exit 1
@@ -267,7 +268,7 @@ configure() {
     else
         if has_configure_opt --enable-unicode
         then
-            copts+=(--enable-unicode=ucs4)
+            copts+=("--enable-unicode=ucs4")
         fi
     fi
 
@@ -284,7 +285,7 @@ configure() {
     # Same dbm order as debian (but with ndbm added as well as the last option):
     if has_configure_opt --with-dbmliborder
     then
-        copts+=(--with-dbmliborder=bdb:gdbm:ndbm)
+        copts+=("--with-dbmliborder=bdb:gdbm:ndbm")
     fi
 
     # We install Pip manually below so that we can use get-pip.py and
@@ -307,7 +308,7 @@ configure() {
 
     if has_configure_opt '--with-hash-algorithm=.*\bsiphash24\b'
     then
-        copts+=(--with-hash-algorithm=siphash24)
+        copts+=("--with-hash-algorithm=siphash24")
     fi
 
     if [[ ${ENABLESYSTEMEXPAT} = 1 ]] && has_configure_opt --with-system-expat
