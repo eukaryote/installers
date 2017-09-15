@@ -95,13 +95,15 @@ make_build_dir() {
         err "usage: make_build_dir VERSION" ||
         return
 
-    build_dir=$(umask 077 && mktemp -d -t install_zsh_"$(echon "${version}" | tr . _)"_XXXXXX)
-    if [ "$?" != "0" ] || [ -d "${build_dir}" ]
-    then
+    build_dir=$(umask 077 && mktemp -d -t install_zsh_"$(echon "${version}" | tr . _)"_XXXXXX) || {
         err "Error creating build dir using mktemp -d"
         err "Check \$TMPDIR and verify that it is set to a suitable directory"
         return 1
-    fi
+    }
+    [ -d "${build_dir}" ] ||
+        err "Expected build_dir ${build_dir} does not exist" ||
+        return
+
     echon "${build_dir}"
 }
 
