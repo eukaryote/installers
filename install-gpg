@@ -28,7 +28,7 @@ GPG_ORIGIN="https://github.com/gpg/gnupg.git"
 PKG_PINENTRY="https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-1.0.0.tar.bz2"
 PKG_LIBASSUAN="https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-2.4.3.tar.bz2"
 PKG_NPTH="https://www.gnupg.org/ftp/gcrypt/npth/npth-1.5.tar.bz2"
-PKG_LIBGCRYPT="https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.0.tar.bz2"
+PKG_LIBGCRYPT="https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.1.tar.bz2"
 PKG_LIBKSBA="https://www.gnupg.org/ftp/gcrypt/libksba/libksba-1.3.5.tar.bz2"
 PKG_LIBGPGERROR="https://www.gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.27.tar.bz2"
 
@@ -114,14 +114,14 @@ install_gpg_main() {
         gpg_version=$(echo -n "${gpg_tag}" | command grep -E -o '[0-9][-0-9\._]+')
         echo "Using latest GPG version: ${gpg_version}"
     else
-        gpg_tag="gpg-${gpg_version}"
+        gpg_tag="gnupg-${gpg_version}"
     fi
 
     local -r install_dir="${GPG_BASE}/${gpg_version}"
 
     if [[ -f "${install_dir}/bin/gpg" || -f "${install_dir}/bin/gpg2" ]]
     then
-        err "GPG version ${version} already exists: ${install_dir}"
+        err "GPG version ${gpg_version} already exists: ${install_dir}"
         return 1
     fi
 
