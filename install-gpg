@@ -108,7 +108,7 @@ install_gpg_main() {
 
     if [[ "${gpg_version}" = "latest" ]]
     then
-        gpg_tag=$(get_latest_tag "${REPOS}"/gpg "gnupg") ||
+        gpg_tag=$(get_latest_tag "${REPOS}"/gpg "gnupg" '(base|beta.*|rc.*)$') ||
             err "ERROR: couldn't determine latest GPG version"||
             return
         gpg_version=$(echo -n "${gpg_tag}" | command grep -E -o '[0-9][-0-9\._]+')
