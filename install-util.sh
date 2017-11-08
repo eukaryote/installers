@@ -338,12 +338,18 @@ download_and_verify() {
 # Get the latest tag for Git repo dir provided as param 1 by using
 # 'git tag -l' and an optional prefix regex provided as param 2,
 # using 'sort -V' to determine the latest version number.
+# If some tags should be ignored, an optional third arg may be provided,
+# which should be an extended regex that will be used to prefilter
+# the tags by omitting all tags that match the regex before the
+# normal tag detection proceeds.
 get_latest_tag() {
     local repo="${1:?repo directory is required}"
     local prefix="${2:-.}"
+    local prefilter_regex="${3:-}"
     local tag
 
     tag=$(cd "${repo}" && command git tag -l | \
+        if [[ -n "${prefilter_regex}" ]] ; then command grep -E -v -- "${prefilter_regex}"; else cat; fi | \
         command grep -E "^${prefix}" | \
         command sort -V | \
         command tail -n 1 \
