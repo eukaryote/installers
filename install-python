@@ -55,8 +55,12 @@ PACKAGE="Python-\${version}.${EXT}"
 
 # URL template for URL to download the Python package from;
 # the 'url' function below will interpolate the version that
-# is passed as the first arg to yield the actual URL.
-URL="https://www.python.org/ftp/python/\${version}/${PACKAGE}"
+# is passed as the first arg to yield the actual URL, and
+# will take care of extracting a 'base_version' from the 'version'
+# for versions like '3.7.0b1', where the base_version in the
+# URL before the PACKAGE would be '3.7.0', but the full
+# '3.7.0b1' is in the PACKAGE part.
+URL="https://www.python.org/ftp/python/\${base_version}/${PACKAGE}"
 
 # gcc -mtune value, which determines how instructions are optimized;
 # we use generic by default in order to be more useful for building
@@ -190,6 +194,11 @@ usage() {
     echo "       at the install location will be ovewritten; otherwise we"
     echo "       skip the install step and note that it was skipped"
     echo "       (but the Pip and IPython steps still happen)"
+    echo " - WITH_OPENSSL: if set to a non-empty string value, it should "
+    echo "       be the base path of a compatible OpenSSL installation, "
+    echo "       such as /opt/openssl/1.0.2n if you compiled and installed "
+    echo "       openssl with the --prefix=/opt/openssl/1.0.2n and "
+    echo "       --openssldir=/opt/openssl/1.0.2n/openssl options."
 }
 
 # Interpolate 1st param as version into PACKAGE template defined above.
@@ -225,6 +234,15 @@ src_dir() {
 # Echo the URL of the Python source package given version as first param.
 url() {
     local -r version=${1:?version parameter is required}
+
+    # The Python download URL uses the full version, such as '3.7.0b1'
+    # in PACKAGE part of the URL (Python-3.7.0b1.tar.gz), but only
+    # the '3.7.0' part in the parent directory that contains the file
+    # (interpreting the URL structure as if it mapped to the filesystem,
+    # which it probably does in this case).
+    # shellcheck disable=SC2034
+    local -r base_version=$(expr match "${version}" "\([0-9]*\.[0-9]*\.[0-9]*\)")
+
     eval "echo \"${URL}\""
 }
 
@@ -240,7 +258,7 @@ download_package_and_signature() {
     local packageurl
     packageurl=$(url "${version}") || return
 
-    echo -n " - downloading"
+    echo -n " - downloading from ${packageurl}"
     download_and_verify "${packageurl}" "${packageurl}.asc" "${build_dir}"
 }
 
@@ -327,8 +345,13 @@ configure() {
     fi
 
     if [[ ${ENABLEPYDEBUG} = 1 ]]
-        then
+    then
         copts+=(--with-pydebug)
+    fi
+
+    if [[ -n ${WITH_OPENSSL} ]]
+    then
+        copts+=(--with-openssl=${WITH_OPENSSL})
     fi
 
     set +u
