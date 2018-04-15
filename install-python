@@ -535,7 +535,7 @@ install_ipython() {
             fi
         fi
     fi
-    stage_complete install_pip "${build_dir}" $?
+    stage_complete install_ipython "${build_dir}" $?
 }
 
 # Install from source a Python version given as the first param to the
