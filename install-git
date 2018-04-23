@@ -25,16 +25,7 @@ GIT_BASE="${GIT_BASE:-/opt/git}"
 install_git_main() {
     local version="${1:?version param is required}"
 
-    if [[ ! -d "${REPOS}/git" ]]
-    then
-        cd "${REPOS}" || return
-        command git clone --quiet https://github.com/git/git.git git || return
-        cd git || return
-    else
-        cd "${REPOS}/git" || return
-        command git checkout --quiet master || return
-        command git pull --quiet --rebase --autostash --tags || return
-    fi
+    git_update git https://github.com/git/git.git || return
 
     local version_tag
     if [[ "${version}" = "latest" ]]
