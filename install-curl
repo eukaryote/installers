@@ -57,7 +57,7 @@ install_curl_main() {
     local -r nghttp2_dir="${NGHTTP2_BASE}/${nghttp2_version}"
 
     [ -d "${nghttp2_dir}" ] ||
-        err "ERROR: couldn't find nghttp2 install at expected loction: ${nghttp2_dir}" ||
+        err "ERROR: couldn't find nghttp2 install at expected location: ${nghttp2_dir}" ||
         return
 
     if [[ "${nghttp2_version}" = "default" ]]
