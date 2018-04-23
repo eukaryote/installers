@@ -362,7 +362,7 @@ get_latest_tag() {
         err "ERROR: couldn't determine latest tag for repo: ${repo}" ||
         return 1
 
-    >&2 echo -n "Using latest tag: ${tag}"
+    >&2 echo "Using latest tag: ${tag}"
 
     echo -n "${tag}"
 }
