@@ -77,18 +77,7 @@ install_nghttp2_main() {
 
     cd "${REPOS}" || return
 
-    if [[ ! -e nghttp2 ]]
-    then
-        git clone --quiet https://github.com/nghttp2/nghttp2.git nghttp2 >/dev/null || return
-        cd nghttp2 || return
-    else
-        [[ -d nghttp2 ]] ||
-            err "ERROR: ${REPOS}/nghttp2 exists but is not a directory" ||
-            return 1
-        cd nghttp2 || return
-        command git checkout --quiet master || return
-        command git pull --quiet --rebase --autostash --tags || return
-    fi
+    git_update nghttp2 https://github.com/nghttp2/nghttp2.git || return
 
     local version_tag
     version_tag=$(get_version_tag "${version}") || return
