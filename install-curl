@@ -26,15 +26,7 @@ install_curl_main() {
     local -r curl_dir="${REPOS}/curl"
     cd "${REPOS}" || return
 
-    if [[ ! -d "${curl_dir}" ]]
-    then
-        command git clone --quiet https://github.com/curl/curl.git curl || return
-        cd curl || return
-    else
-        cd curl || return
-        command git checkout --quiet --force master
-        command git pull --quiet --rebase --autostash --tags >/dev/null || return
-    fi
+    git_update curl https://github.com/curl/curl.git || return
 
     local curl_tag
 
