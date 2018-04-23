@@ -389,7 +389,7 @@ git_checkout_tag() {
             err "ERROR: invalid version '${version}': should be something like 0.2.0" ||
             return 1
         command git tag -l | grep -E "^${tag_prefix}${version}\$" >/dev/null 2>&1 ||
-            err "no tag found for version ${version}"
+            err "no tag found for version ${version}" ||
             return 1
         result="${tag_prefix}${version}"
     fi
@@ -461,10 +461,13 @@ gpg_verify() {
     }
 }
 
-# Update a git repo in the REPOS dir, or clone it if it doesn't exist.
+# Update a git repo in the REPOS dir, or clone it if it doesn't exist,
+# calling 'make clean' if it exists already unless '1' is passed
+# as the third arg.
 git_update() {
     local name="${1:?name of repo is required}"
     local gitremote="${2:?gitremote URL of repo is required}"
+    local no_clean="${3:-0}"
 
     [[ -n "${REPOS:-}" ]] ||
         err "ERROR: env var REPOS is not defined" ||
@@ -484,7 +487,11 @@ git_update() {
             return 1
 
         cd "${name}" || return
-        command git checkout --quiet master || return
+        if [[ "${no_clean}"  != "1" ]]
+        then
+            run_clean make clean || return
+        fi
+        command git checkout --quiet --force master || return
         command git pull --quiet --rebase --autostash --tags || return
     fi
 }
