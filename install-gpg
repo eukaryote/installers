@@ -24,13 +24,13 @@ REPOS="${REPOS:-$HOME/repos}"
 GPG_BASE="${GPG_BASE:-/opt/gpg}"
 GPG_ORIGIN="https://github.com/gpg/gnupg.git"
 
-# latest versions of deps as of 2017-08-13:
-PKG_PINENTRY="https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-1.0.0.tar.bz2"
-PKG_LIBASSUAN="https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-2.4.3.tar.bz2"
+# latest versions of deps as of 2018-04-23:
+PKG_PINENTRY="https://www.gnupg.org/ftp/gcrypt/pinentry/pinentry-1.1.0.tar.bz2"
+PKG_LIBASSUAN="https://www.gnupg.org/ftp/gcrypt/libassuan/libassuan-2.5.1.tar.bz2"
 PKG_NPTH="https://www.gnupg.org/ftp/gcrypt/npth/npth-1.5.tar.bz2"
-PKG_LIBGCRYPT="https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.1.tar.bz2"
+PKG_LIBGCRYPT="https://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.8.2.tar.bz2"
 PKG_LIBKSBA="https://www.gnupg.org/ftp/gcrypt/libksba/libksba-1.3.5.tar.bz2"
-PKG_LIBGPGERROR="https://www.gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.27.tar.bz2"
+PKG_LIBGPGERROR="https://www.gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.29.tar.bz2"
 
 deps=(
     "${PKG_PINENTRY}"
@@ -80,9 +80,6 @@ fetchdeps() {
         mkdir -m 0700 "${workdir}/${name}" || return
 
         unpack "${pkgpath}" "${workdir}" || return
-        # command tar -C "${workdir}/${name}" --strip-components 1 -xf "${pkgpath}" ||
-        #     err "couldn't extract tarball: ${pkgname}" ||
-        #     return
     done
 }
 
@@ -94,15 +91,7 @@ install_gpg_main() {
     mkdir -p "${REPOS}" || return
     cd "${REPOS}" || return
 
-    if [[ ! -d "${gpg_dir}" ]]
-    then
-        command git clone --quiet "${GPG_ORIGIN}" gpg || return
-        cd gpg || return
-    else
-        cd gpg || return
-        command git checkout --quiet --force master
-        command git pull --quiet --rebase --autostash --tags >/dev/null || return
-    fi
+    git_update gpg "${GPG_ORIGIN}" 1 || return
 
     local gpg_tag
 
@@ -204,7 +193,7 @@ install_gpg_main() {
 
     if [[ -f "config.log" ]]
     then
-        make distclean || return 1
+        make distclean >/dev/null 2>&1 # try, but ignore fail
         ./autogen.sh || return 1
     else
         make distclean >/dev/null 2>&1 # try, but ignore fail
