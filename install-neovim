@@ -44,7 +44,7 @@ install_main() {
         err "ERROR: error checking out git version tag ${version_tag}" ||
         return
 
-    command rm -rf build/ || return
+    run_clean make distclean || return
     run_clean make CMAKE_EXTRA_FLAGS="-DCMAKE_INSTALL_PREFIX=${install_dir}" || return
     run_clean make install || return
 
