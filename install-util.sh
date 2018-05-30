@@ -489,7 +489,17 @@ git_update() {
         cd "${name}" || return
         if [[ "${no_clean}"  != "1" ]]
         then
-            run_clean make clean || return
+            local make_clean_output
+            make_clean_output=$(run_clean make clean 2>&1)
+            local rc=$?
+            if [[ "${rc}" != "0" ]]
+            then
+                if ! grep -q "No rule to make target" <<<"${make_clean_output}"
+                then
+                    echo "${make_clean_output}"
+                    return "${rc}"
+                fi
+            fi
         fi
         command git checkout --quiet --force master || return
         command git pull --quiet --rebase --autostash --tags || return
