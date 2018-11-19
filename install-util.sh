@@ -304,7 +304,7 @@ download() {
     for url in "$@"
     do
         filename=$(basename_from_url "${url}") || return
-        command curl -s -S -L -o "${download_dir}/${filename}" "${url}" ||
+        command curl -s -S -f -L -o "${download_dir}/${filename}" "${url}" ||
             err " - curl failed to download file from ${url}" ||
             return
     done
